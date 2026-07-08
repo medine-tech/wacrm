@@ -23,13 +23,23 @@ export type TwilioWebhookKind = 'status' | 'reaction' | 'message'
 
 /**
  * Discriminate the three payload shapes Twilio POSTs to one URL:
- * status callbacks (MessageStatus present, no Body/NumMedia),
- * inbound reactions (MessageType='reaction'), and inbound messages.
+ * status callbacks (MessageStatus carrying an OUTBOUND lifecycle
+ * value), inbound reactions (MessageType='reaction'), and inbound
+ * messages. Real inbound deliveries also carry MessageStatus —
+ * 'received'/'receiving' — so presence alone must not mark a status
+ * callback or every real inbound message would be silently dropped.
  */
 export function classifyTwilioWebhook(
   params: URLSearchParams
 ): TwilioWebhookKind {
-  if (params.get('MessageStatus')) return 'status'
+  const messageStatus = params.get('MessageStatus')
+  if (
+    messageStatus &&
+    messageStatus !== 'received' &&
+    messageStatus !== 'receiving'
+  ) {
+    return 'status'
+  }
   if (params.get('MessageType') === 'reaction') return 'reaction'
   return 'message'
 }

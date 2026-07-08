@@ -33,6 +33,39 @@ describe('classifyTwilioWebhook', () => {
       classifyTwilioWebhook(form({ MessageSid: 'SM1', MessageType: 'text' }))
     ).toBe('message')
   })
+
+  it('classifies a real inbound delivery (MessageStatus=received) as a message, not a status callback', () => {
+    // Shape observed from live Twilio WhatsApp inbound POSTs: they carry
+    // MessageStatus/SmsStatus 'received' alongside the message fields.
+    expect(
+      classifyTwilioWebhook(
+        form({
+          MessageSid: 'SM1',
+          SmsMessageSid: 'SM1',
+          SmsStatus: 'received',
+          MessageStatus: 'received',
+          MessageType: 'text',
+          Body: 'Hola MedineTech',
+          From: 'whatsapp:+584163870984',
+          To: 'whatsapp:+584248274759',
+          NumMedia: '0',
+        })
+      )
+    ).toBe('message')
+  })
+
+  it('classifies an inbound reaction carrying MessageStatus=received as a reaction', () => {
+    expect(
+      classifyTwilioWebhook(
+        form({
+          MessageSid: 'SM2',
+          MessageStatus: 'received',
+          MessageType: 'reaction',
+          Body: '👍',
+        })
+      )
+    ).toBe('reaction')
+  })
 })
 
 describe('mapTwilioStatusCallback', () => {
