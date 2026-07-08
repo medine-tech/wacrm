@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
@@ -6,6 +6,24 @@ import {
   SendMessageError,
   type SendMessageParams,
 } from './send-message';
+import { encrypt } from './encryption';
+
+// The flow-pause tail uses the service-role client; stub it with an
+// endlessly chainable thenable so the twilio-branch tests below can
+// drive a full send without a real Supabase.
+vi.mock('@/lib/flows/admin-client', () => ({
+  supabaseAdmin: () => {
+    const chain: Record<string, unknown> = {};
+    chain.from = () => chain;
+    chain.update = () => chain;
+    chain.eq = () => chain;
+    chain.then = (
+      onFulfilled: (v: unknown) => unknown,
+      onRejected?: (e: unknown) => unknown
+    ) => Promise.resolve({ error: null }).then(onFulfilled, onRejected);
+    return chain;
+  },
+}));
 
 // A db that explodes if touched — these tests cover the param
 // validation that MUST short-circuit before any query runs.
@@ -113,5 +131,135 @@ describe('SendMessageError', () => {
     expect(e.code).toBe('meta_error');
     expect(e.status).toBe(502);
     expect(e).toBeInstanceOf(Error);
+  });
+});
+
+describe('sendMessageToConversation — twilio provider branch', () => {
+  interface ChainResults {
+    single?: unknown;
+    maybeSingle?: unknown;
+    then?: unknown;
+  }
+
+  function makeChain(results: ChainResults) {
+    const chain: Record<string, unknown> = {};
+    chain.select = () => chain;
+    chain.eq = () => chain;
+    chain.update = () => chain;
+    chain.insert = () => chain;
+    chain.single = () =>
+      Promise.resolve(results.single ?? { data: null, error: null });
+    chain.maybeSingle = () =>
+      Promise.resolve(results.maybeSingle ?? { data: null, error: null });
+    chain.then = (
+      onFulfilled: (v: unknown) => unknown,
+      onRejected?: (e: unknown) => unknown
+    ) =>
+      Promise.resolve(results.then ?? { error: null }).then(
+        onFulfilled,
+        onRejected
+      );
+    return chain;
+  }
+
+  function twilioDb(): SupabaseClient {
+    const conversation = {
+      id: 'cv-1',
+      contact: { id: 'ct-1', phone: '+58 424 827 4759' },
+    };
+    const config = {
+      id: 'cfg-1',
+      provider: 'twilio',
+      phone_number_id: '14155550100',
+      twilio_account_sid: 'AC00000000000000000000000000000001',
+      twilio_api_key_sid: null,
+      twilio_messaging_service_sid: null,
+      access_token: encrypt('twilio-secret'),
+    };
+    return {
+      from: (table: string) => {
+        if (table === 'conversations') {
+          return makeChain({
+            single: { data: conversation, error: null },
+            then: { error: null },
+          });
+        }
+        if (table === 'whatsapp_config') {
+          return makeChain({ single: { data: config, error: null } });
+        }
+        if (table === 'messages') {
+          return makeChain({ single: { data: { id: 'db-msg-1' }, error: null } });
+        }
+        if (table === 'contacts') {
+          return makeChain({ then: { error: null } });
+        }
+        throw new Error(`unexpected table: ${table}`);
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', '');
+    vi.stubEnv('TWILIO_WEBHOOK_SECRET', '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('sends a text through Twilio and returns the Message SID', async () => {
+    const captured: { url: string; form: URLSearchParams }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.push({
+          url: String(url),
+          form: new URLSearchParams(String(init.body ?? '')),
+        });
+        return new Response(JSON.stringify({ sid: 'SM900' }), { status: 201 });
+      })
+    );
+
+    const result = await sendMessageToConversation(twilioDb(), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'text',
+      contentText: 'hello',
+    });
+
+    expect(result).toEqual({
+      messageId: 'db-msg-1',
+      whatsappMessageId: 'SM900',
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].url).toContain(
+      '/Accounts/AC00000000000000000000000000000001/Messages.json'
+    );
+    expect(captured[0].form.get('To')).toBe('whatsapp:+584248274759');
+    expect(captured[0].form.get('From')).toBe('whatsapp:+14155550100');
+    expect(captured[0].form.get('Body')).toBe('hello');
+  });
+
+  it('maps a Twilio failure to SendMessageError twilio_error without variant retries', async () => {
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 63016, message: 'raw' }), {
+          status: 400,
+        })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(
+      sendMessageToConversation(twilioDb(), 'acct-1', {
+        conversationId: 'cv-1',
+        messageType: 'text',
+        contentText: 'hello',
+      })
+    ).rejects.toMatchObject({
+      code: 'twilio_error',
+      status: 502,
+      message: expect.stringMatching(/24-hour WhatsApp session window/),
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

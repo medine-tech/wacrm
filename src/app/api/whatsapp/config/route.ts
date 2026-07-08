@@ -6,6 +6,11 @@ import {
   subscribeWabaToApp,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
+import {
+  parseTwilioConfigInput,
+  probeTwilioCredentials,
+  twilioSenderPhoneInfo,
+} from '@/lib/whatsapp/twilio-config'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 
 /**
@@ -59,6 +64,7 @@ function supabaseAdmin() {
  *   { connected: false, reason: 'no_config',        message: '...' }
  *   { connected: false, reason: 'token_corrupted',  message: '...', needs_reset: true }
  *   { connected: false, reason: 'meta_api_error',   message: '...' }
+ *   { connected: false, reason: 'twilio_api_error', message: '...' }
  */
 export async function GET() {
   try {
@@ -87,7 +93,9 @@ export async function GET() {
 
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
-      .select('phone_number_id, access_token, status')
+      .select(
+        'provider, phone_number_id, access_token, status, twilio_account_sid, twilio_api_key_sid'
+      )
       .eq('account_id', accountId)
       .maybeSingle()
 
@@ -129,6 +137,40 @@ export async function GET() {
       )
     }
 
+    if (config.provider === 'twilio') {
+      if (!config.twilio_account_sid) {
+        return NextResponse.json(
+          {
+            connected: false,
+            reason: 'twilio_api_error',
+            message: 'Twilio Account SID is missing — re-save the configuration.',
+          },
+          { status: 200 }
+        )
+      }
+      const probe = await probeTwilioCredentials({
+        accountSid: config.twilio_account_sid,
+        apiKeySid: config.twilio_api_key_sid,
+        authSecret: accessToken,
+      })
+      if (probe.ok) {
+        return NextResponse.json({
+          connected: true,
+          provider: 'twilio',
+          phone_info: twilioSenderPhoneInfo(config.phone_number_id),
+        })
+      }
+      console.error('[whatsapp/config GET] Twilio API verification failed:', probe.message)
+      return NextResponse.json(
+        {
+          connected: false,
+          reason: 'twilio_api_error',
+          message: `Twilio rejected the credentials: ${probe.message}`,
+        },
+        { status: 200 }
+      )
+    }
+
     // Validate credentials against Meta
     try {
       const phoneInfo = await verifyPhoneNumber({
@@ -161,7 +203,9 @@ export async function GET() {
  * POST /api/whatsapp/config
  *
  * Saves or updates the WhatsApp config for the authenticated user.
- * Verifies credentials with Meta first, then encrypts and stores.
+ * Verifies credentials with the provider first (Meta Graph, or a
+ * Twilio Basic-auth probe when body.provider === 'twilio'), then
+ * encrypts and stores.
  */
 export async function POST(request: Request) {
   try {
@@ -185,6 +229,16 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
+
+    if (body?.provider === 'twilio') {
+      return await saveTwilioConfig({
+        supabase,
+        userId: user.id,
+        accountId,
+        body,
+      })
+    }
+
     const { phone_number_id, waba_id, access_token, verify_token, pin } = body
 
     if (!access_token || !phone_number_id) {
@@ -354,6 +408,12 @@ export async function POST(request: Request) {
     // store the credentials and the error so the UI can guide the
     // user through a retry.
     const baseRow = {
+      // Clear the Twilio columns on a Meta save so switching providers
+      // never leaves stale credentials behind.
+      provider: 'meta',
+      twilio_account_sid: null,
+      twilio_api_key_sid: null,
+      twilio_messaging_service_sid: null,
       phone_number_id,
       waba_id: waba_id || null,
       access_token: encryptedAccessToken,
@@ -429,6 +489,151 @@ export async function POST(request: Request) {
     console.error('Error in WhatsApp config POST:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
+}
+
+/**
+ * Twilio branch of POST /api/whatsapp/config.
+ *
+ * Body: { provider: 'twilio', twilio_account_sid, twilio_api_key_sid?,
+ * twilio_auth_secret, from_number, twilio_messaging_service_sid? }.
+ *
+ * The Meta lifecycle (verify/register/subscribed_apps) has no Twilio
+ * equivalent — WhatsApp senders are provisioned in the Twilio Console —
+ * so this path only probes the credentials and persists the row.
+ * registered_at / subscribed_apps_at stay NULL by design.
+ */
+async function saveTwilioConfig(args: {
+  supabase: Awaited<ReturnType<typeof createClient>>
+  userId: string
+  accountId: string
+  body: Record<string, unknown>
+}) {
+  const { supabase, userId, accountId, body } = args
+
+  const parsed = parseTwilioConfigInput(body)
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 })
+  }
+  const input = parsed.input
+
+  // Same cross-account guard as the Meta path — phone_number_id is the
+  // webhook tenant-routing key on both providers.
+  const { data: claimed, error: claimedError } = await supabaseAdmin()
+    .from('whatsapp_config')
+    .select('account_id')
+    .eq('phone_number_id', input.fromNumberDigits)
+    .neq('account_id', accountId)
+    .maybeSingle()
+
+  if (claimedError) {
+    console.error('Error checking phone_number_id ownership:', claimedError)
+    return NextResponse.json(
+      { error: 'Failed to validate configuration' },
+      { status: 500 }
+    )
+  }
+
+  if (claimed) {
+    return NextResponse.json(
+      {
+        error:
+          'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one wacrm user.',
+      },
+      { status: 409 }
+    )
+  }
+
+  // Verify credentials BEFORE saving, mirroring the Meta path.
+  const probe = await probeTwilioCredentials({
+    accountSid: input.accountSid,
+    apiKeySid: input.apiKeySid,
+    authSecret: input.authSecret,
+  })
+  if (!probe.ok) {
+    console.error('Twilio credential verification failed during save:', probe.message)
+    return NextResponse.json(
+      { error: `Twilio credential verification failed: ${probe.message}` },
+      { status: 400 }
+    )
+  }
+
+  let encryptedSecret: string
+  try {
+    encryptedSecret = encrypt(input.authSecret)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown encryption error'
+    console.error('Encryption failed:', message)
+    return NextResponse.json(
+      {
+        error:
+          'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.',
+      },
+      { status: 500 }
+    )
+  }
+
+  const now = new Date().toISOString()
+  const baseRow = {
+    provider: 'twilio',
+    phone_number_id: input.fromNumberDigits,
+    waba_id: null,
+    access_token: encryptedSecret,
+    verify_token: null,
+    twilio_account_sid: input.accountSid,
+    twilio_api_key_sid: input.apiKeySid,
+    twilio_messaging_service_sid: input.messagingServiceSid,
+    status: 'connected',
+    connected_at: now,
+    registered_at: null,
+    subscribed_apps_at: null,
+    last_registration_error: null,
+    updated_at: now,
+  }
+
+  const { data: existing } = await supabase
+    .from('whatsapp_config')
+    .select('id')
+    .eq('account_id', accountId)
+    .maybeSingle()
+
+  if (existing) {
+    const { error: updateError } = await supabase
+      .from('whatsapp_config')
+      .update(baseRow)
+      .eq('account_id', accountId)
+
+    if (updateError) {
+      console.error('Error updating whatsapp_config:', updateError)
+      return NextResponse.json(
+        { error: 'Failed to update configuration' },
+        { status: 500 }
+      )
+    }
+  } else {
+    const { error: insertError } = await supabase
+      .from('whatsapp_config')
+      .insert({
+        account_id: accountId,
+        user_id: userId,
+        ...baseRow,
+      })
+
+    if (insertError) {
+      console.error('Error inserting whatsapp_config:', insertError)
+      return NextResponse.json(
+        { error: 'Failed to save configuration' },
+        { status: 500 }
+      )
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    saved: true,
+    registered: false,
+    provider: 'twilio',
+    phone_info: twilioSenderPhoneInfo(input.fromNumberDigits),
+  })
 }
 
 /**

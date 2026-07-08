@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
 export async function GET(
@@ -67,17 +67,30 @@ export async function GET(
     // Get the download URL from Meta
     const mediaInfo = await getMediaUrl({ mediaId, accessToken })
 
-    // Download the binary data
-    const { buffer, contentType } = await downloadMedia({
-      downloadUrl: mediaInfo.url,
-      accessToken,
+    // Stream the binary straight through instead of buffering — large
+    // WhatsApp media (documents up to 100MB) would otherwise risk the
+    // serverless function's memory and response-size limits.
+    const upstream = await fetch(mediaInfo.url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
     })
+    if (!upstream.ok || !upstream.body) {
+      console.error('WhatsApp media download failed:', upstream.status)
+      return NextResponse.json(
+        { error: 'Failed to fetch media' },
+        { status: 502 }
+      )
+    }
 
-    return new Response(new Uint8Array(buffer), {
+    return new Response(upstream.body, {
       status: 200,
       headers: {
-        'Content-Type': contentType || mediaInfo.mimeType || 'application/octet-stream',
-        'Cache-Control': 'public, max-age=86400',
+        'Content-Type':
+          upstream.headers.get('content-type') ||
+          mediaInfo.mimeType ||
+          'application/octet-stream',
+        // `private` — media is behind auth; a shared cache must never
+        // serve one user's media to another.
+        'Cache-Control': 'private, max-age=86400',
       },
     })
   } catch (error) {

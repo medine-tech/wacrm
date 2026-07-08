@@ -19,6 +19,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
+import {
+  sendTemplateMessage as sendTwilioTemplateMessage,
+  twilioCredentialsFromConfig,
+  type TwilioSendCredentials,
+} from '@/lib/whatsapp/twilio-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import {
   sanitizePhoneForMeta,
@@ -27,6 +32,10 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import {
+  resolveTemplateRowForSend,
+  TemplateResolutionError,
+} from '@/lib/whatsapp/template-row-resolve';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
 
@@ -66,8 +75,11 @@ export interface BroadcastPlan {
   broadcastId: string;
   templateName: string;
   templateLanguage: string;
+  provider: 'meta' | 'twilio';
   phoneNumberId: string;
   accessToken: string;
+  /** Set when provider='twilio'; deliverBroadcast sends through it. */
+  twilioCredentials: TwilioSendCredentials | null;
   templateRow: MessageTemplate | null;
   planned: PlannedRecipient[];
   /** Phones rejected up front (invalid E.164) — counted as failed. */
@@ -89,7 +101,7 @@ export async function createBroadcast(
   params: CreateBroadcastParams
 ): Promise<BroadcastPlan> {
   const { name, templateName, recipients } = params;
-  const templateLanguage = params.templateLanguage || 'en_US';
+  let templateLanguage = params.templateLanguage || 'en_US';
 
   if (!templateName) {
     throw new BroadcastError('bad_request', "'template_name' is required", 400);
@@ -125,15 +137,43 @@ export async function createBroadcast(
   }
   const accessToken = decrypt(config.access_token);
 
+  // Resolve provider + Twilio credentials BEFORE any row is inserted
+  // so an incomplete Twilio config fails the request instead of
+  // stranding a 'sending' broadcast.
+  const provider: 'meta' | 'twilio' =
+    config.provider === 'twilio' ? 'twilio' : 'meta';
+  let twilioCredentials: TwilioSendCredentials | null = null;
+  if (provider === 'twilio') {
+    try {
+      twilioCredentials = twilioCredentialsFromConfig({ config, accessToken });
+    } catch (err) {
+      throw new BroadcastError(
+        'whatsapp_not_configured',
+        err instanceof Error ? err.message : 'Twilio configuration incomplete',
+        400
+      );
+    }
+  }
+
   // Template row (once) for header/button components; guard a
   // malformed local row rather than N identical opaque failures.
-  const { data: rawTemplateRow } = await db
-    .from('message_templates')
-    .select('*')
-    .eq('account_id', accountId)
-    .eq('name', templateName)
-    .eq('language', templateLanguage)
-    .maybeSingle();
+  let rawTemplateRow: Record<string, unknown> | null;
+  try {
+    const resolution = await resolveTemplateRowForSend({
+      db,
+      accountId,
+      templateName,
+      templateLanguage: params.templateLanguage,
+      provider,
+    });
+    rawTemplateRow = resolution.row;
+    templateLanguage = resolution.language;
+  } catch (err) {
+    if (err instanceof TemplateResolutionError) {
+      throw new BroadcastError('bad_request', err.message, 400);
+    }
+    throw err;
+  }
   if (rawTemplateRow && !isMessageTemplate(rawTemplateRow)) {
     throw new BroadcastError(
       'template_malformed',
@@ -142,6 +182,17 @@ export async function createBroadcast(
     );
   }
   const templateRow = (rawTemplateRow as MessageTemplate | null) ?? null;
+
+  // A Twilio send is keyed on the Content SID — reject an unusable plan
+  // here instead of stranding a failed broadcast with N identical
+  // per-recipient errors.
+  if (provider === 'twilio' && !templateRow?.twilio_content_sid) {
+    throw new BroadcastError(
+      'template_not_synced',
+      `Template "${templateName}" has no Twilio Content SID — run template Sync in Settings before broadcasting.`,
+      400
+    );
+  }
 
   // Resolve each recipient to a contact. Invalid phones are dropped
   // (counted as rejected) rather than aborting the whole broadcast.
@@ -238,8 +289,10 @@ export async function createBroadcast(
     broadcastId: broadcast.id,
     templateName,
     templateLanguage,
+    provider,
     phoneNumberId: config.phone_number_id,
     accessToken,
+    twilioCredentials,
     templateRow,
     planned,
     rejected,
@@ -272,15 +325,24 @@ export async function deliverBroadcast(
 
     for (const variant of variants) {
       try {
-        const result = await sendTemplateMessage({
-          phoneNumberId: plan.phoneNumberId,
-          accessToken: plan.accessToken,
-          to: variant,
-          templateName: plan.templateName,
-          language: plan.templateLanguage,
-          template: plan.templateRow ?? undefined,
-          params: recipient.params,
-        });
+        const result =
+          plan.provider === 'twilio' && plan.twilioCredentials
+            ? await sendTwilioTemplateMessage({
+                credentials: plan.twilioCredentials,
+                to: variant,
+                templateName: plan.templateName,
+                template: plan.templateRow ?? undefined,
+                params: recipient.params,
+              })
+            : await sendTemplateMessage({
+                phoneNumberId: plan.phoneNumberId,
+                accessToken: plan.accessToken,
+                to: variant,
+                templateName: plan.templateName,
+                language: plan.templateLanguage,
+                template: plan.templateRow ?? undefined,
+                params: recipient.params,
+              });
         sentMessageId = result.messageId;
         lastError = null;
         break;

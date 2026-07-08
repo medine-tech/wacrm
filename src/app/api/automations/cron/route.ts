@@ -1,13 +1,30 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 
+// Constant-time compare so an attacker who can hit the endpoint
+// can't recover the secret byte-by-byte from response-time deltas.
+// Length pre-check is required by timingSafeEqual (throws otherwise)
+// and leaks only the length itself, which isn't sensitive.
+function secretsMatch(supplied: string, expected: string): boolean {
+  const suppliedBuf = Buffer.from(supplied)
+  const expectedBuf = Buffer.from(expected)
+  return (
+    suppliedBuf.length === expectedBuf.length &&
+    timingSafeEqual(suppliedBuf, expectedBuf)
+  )
+}
+
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
- * on a schedule (Vercel Cron / external pinger) — requires a shared
- * secret via the `x-cron-secret` header to match
- * `AUTOMATION_CRON_SECRET`.
+ * on a schedule — accepts either credential:
+ *
+ *   - `x-cron-secret` header matching `AUTOMATION_CRON_SECRET`
+ *     (external pingers that can set custom headers).
+ *   - `Authorization: Bearer <CRON_SECRET>` — the only header
+ *     Vercel Cron can send.
  *
  * The claim step (status = 'running') serves as a simple lock so
  * overlapping invocations don't double-process rows. Best-effort
@@ -15,12 +32,25 @@ import type { AutomationContext } from '@/lib/automations/engine'
  * two-step UPDATE-by-id.
  */
 export async function GET(request: Request) {
-  const expected = process.env.AUTOMATION_CRON_SECRET
-  if (!expected) {
+  const headerSecret = process.env.AUTOMATION_CRON_SECRET || null
+  const bearerSecret = process.env.CRON_SECRET || null
+  if (!headerSecret && !bearerSecret) {
     return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
   }
-  const supplied = request.headers.get('x-cron-secret')
-  if (supplied !== expected) {
+
+  const suppliedHeader = request.headers.get('x-cron-secret')
+  const authorization = request.headers.get('authorization')
+  const suppliedBearer = authorization?.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : null
+  const authorized =
+    (headerSecret != null &&
+      suppliedHeader != null &&
+      secretsMatch(suppliedHeader, headerSecret)) ||
+    (bearerSecret != null &&
+      suppliedBearer != null &&
+      secretsMatch(suppliedBearer, bearerSecret))
+  if (!authorized) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

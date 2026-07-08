@@ -1,5 +1,12 @@
 import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import {
+  sendTextMessage as sendTwilioTextMessage,
+  sendTemplateMessage as sendTwilioTemplateMessage,
+  twilioCredentialsFromConfig,
+} from '@/lib/whatsapp/twilio-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveTemplateRowForSend } from '@/lib/whatsapp/template-row-resolve'
+import type { MessageTemplate } from '@/types'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -94,7 +101,46 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
 
   const accessToken = decrypt(config.access_token)
 
+  const isTwilio = config.provider === 'twilio'
+
+  // A Twilio template send is keyed on twilio_content_sid, which
+  // template_name + language alone cannot yield — load the local row.
+  // The Meta path stays params-only (behaviour unchanged). Automations
+  // configured before a Meta→Twilio switch carry 'en_US' while Twilio
+  // rows sync with Twilio codes ('en') — the resolver falls back to a
+  // name-only match when unambiguous.
+  let twilioTemplateRow: MessageTemplate | undefined
+  if (isTwilio && input.kind === 'template') {
+    const { row } = await resolveTemplateRowForSend({
+      db,
+      accountId: input.accountId,
+      templateName: input.templateName,
+      templateLanguage: input.language,
+      provider: 'twilio',
+    })
+    twilioTemplateRow = (row as MessageTemplate | null) ?? undefined
+  }
+
   const attempt = async (phone: string): Promise<string> => {
+    if (isTwilio) {
+      const credentials = twilioCredentialsFromConfig({ config, accessToken })
+      if (input.kind === 'template') {
+        const r = await sendTwilioTemplateMessage({
+          credentials,
+          to: phone,
+          templateName: input.templateName,
+          template: twilioTemplateRow,
+          params: input.params,
+        })
+        return r.messageId
+      }
+      const r = await sendTwilioTextMessage({
+        credentials,
+        to: phone,
+        text: input.text,
+      })
+      return r.messageId
+    }
     if (input.kind === 'template') {
       const r = await sendTemplateMessage({
         phoneNumberId: config.phone_number_id,

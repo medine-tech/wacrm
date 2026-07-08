@@ -10,6 +10,7 @@ import {
 import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components'
 import { ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
+import { TWILIO_TEMPLATE_MANAGEMENT_MESSAGE } from '@/lib/whatsapp/twilio-content-map'
 
 /**
  * Shared upsert payload builder — both the Meta-failure path and the
@@ -109,6 +110,21 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
         { status: 403 },
+      )
+    }
+
+    // Twilio accounts manage templates in the Twilio Console — gate
+    // before validation (and before the dry-run short-circuit) so the
+    // provider message wins in every mode.
+    const { data: providerRow } = await supabase
+      .from('whatsapp_config')
+      .select('provider')
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (providerRow?.provider === 'twilio') {
+      return NextResponse.json(
+        { error: TWILIO_TEMPLATE_MANAGEMENT_MESSAGE },
+        { status: 400 },
       )
     }
 

@@ -1,24 +1,36 @@
 import { NextResponse } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
+import {
+  mapTwilioContentToRow,
+  type TwilioContentItem,
+} from '@/lib/whatsapp/twilio-content-map'
 import type { TemplateButton, TemplateSampleValues } from '@/types'
 
 /**
- * Sync message templates from Meta → local message_templates table.
+ * Sync message templates from the provider → local message_templates
+ * table.
  *
- * The local catalog stores Meta's status enum verbatim (APPROVED /
+ * Meta: the local catalog stores Meta's status enum verbatim (APPROVED /
  * PENDING / REJECTED / PAUSED / DISABLED / IN_APPEAL / PENDING_DELETION)
  * so the edit / resubmit / delete flows can distinguish recoverable
  * states (PAUSED) from terminal ones (DISABLED) and so webhook events
  * land 1:1 without a translation table.
  *
- * Locally-created templates (no Meta counterpart) are NOT deleted —
+ * Twilio: templates live in the Twilio Console as Content templates;
+ * Sync imports them (ContentAndApprovals) with their WhatsApp approval
+ * status. Twilio has no status webhook — this poll is the only source.
+ *
+ * Locally-created templates (no provider counterpart) are NOT deleted —
  * they remain visible so the user can notice drift and clean up.
  */
 
 const META_API_VERSION = 'v21.0'
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
+const TWILIO_CONTENT_BASE = 'https://content.twilio.com/v1'
+const PAGE_CAP = 20
 
 interface MetaButton {
   type: string
@@ -122,6 +134,197 @@ function extractSampleValues(
   return sv
 }
 
+interface TemplateSyncError {
+  name: string
+  language: string
+  message: string
+}
+
+interface TemplateRowUpsert {
+  name: string
+  language: string
+  [column: string]: unknown
+}
+
+/**
+ * Shared select-then-update/insert loop keyed on (account_id, name,
+ * language) — the same discipline for both providers. Per-row errors
+ * are collected, never thrown, so one bad row doesn't abort the sync.
+ */
+async function upsertTemplateRows(
+  supabase: SupabaseClient,
+  accountId: string,
+  rows: TemplateRowUpsert[],
+): Promise<{ inserted: number; updated: number; errors: TemplateSyncError[] }> {
+  let inserted = 0
+  let updated = 0
+  const errors: TemplateSyncError[] = []
+
+  for (const row of rows) {
+    const { data: existing, error: lookupErr } = await supabase
+      .from('message_templates')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('name', row.name)
+      .eq('language', row.language)
+      .maybeSingle()
+
+    if (lookupErr) {
+      errors.push({
+        name: row.name,
+        language: row.language,
+        message: lookupErr.message,
+      })
+      continue
+    }
+
+    if (existing?.id) {
+      const { error: updErr } = await supabase
+        .from('message_templates')
+        .update(row)
+        .eq('id', existing.id)
+      if (updErr) {
+        errors.push({
+          name: row.name,
+          language: row.language,
+          message: updErr.message,
+        })
+      } else {
+        updated++
+      }
+    } else {
+      const { error: insErr } = await supabase
+        .from('message_templates')
+        .insert(row)
+      if (insErr) {
+        errors.push({
+          name: row.name,
+          language: row.language,
+          message: insErr.message,
+        })
+      } else {
+        inserted++
+      }
+    }
+  }
+
+  return { inserted, updated, errors }
+}
+
+interface TwilioSyncArgs {
+  supabase: SupabaseClient
+  config: {
+    access_token: string
+    twilio_account_sid?: string | null
+    twilio_api_key_sid?: string | null
+  }
+  accountId: string
+  userId: string
+}
+
+async function syncTwilioContentTemplates(
+  args: TwilioSyncArgs,
+): Promise<NextResponse> {
+  const { supabase, config, accountId, userId } = args
+
+  if (!config.twilio_account_sid) {
+    return NextResponse.json(
+      {
+        error:
+          'Twilio Account SID missing. Re-save your WhatsApp configuration in Settings.',
+      },
+      { status: 400 },
+    )
+  }
+
+  const authSecret = decrypt(config.access_token)
+  const username = config.twilio_api_key_sid || config.twilio_account_sid
+  const authHeader =
+    'Basic ' + Buffer.from(`${username}:${authSecret}`).toString('base64')
+
+  const contents: TwilioContentItem[] = []
+  let nextUrl:
+    | string
+    | null = `${TWILIO_CONTENT_BASE}/ContentAndApprovals?PageSize=100`
+  let pageCount = 0
+
+  while (nextUrl && pageCount < PAGE_CAP) {
+    pageCount++
+    const twilioRes: Response = await fetch(nextUrl, {
+      headers: { Authorization: authHeader },
+    })
+
+    if (!twilioRes.ok) {
+      let twilioErr = `Twilio Content API error: ${twilioRes.status}`
+      try {
+        const body = await twilioRes.json()
+        if (body?.message) twilioErr = body.message
+      } catch {
+        // response wasn't JSON — keep the fallback
+      }
+      return NextResponse.json({ error: twilioErr }, { status: 502 })
+    }
+
+    const twilioBody: {
+      contents?: TwilioContentItem[]
+      meta?: { next_page_url?: string | null }
+    } = await twilioRes.json()
+    if (twilioBody.contents) contents.push(...twilioBody.contents)
+    nextUrl = twilioBody.meta?.next_page_url ?? null
+  }
+
+  // Twilio does not enforce friendly_name uniqueness (the SID is the
+  // only unique key; approved-Content revisions reuse the name), but
+  // local rows are keyed on (name, language) — collapsing duplicates
+  // last-listed-wins could shadow an approved template with a draft.
+  // Keep the approved item per (name, language) and surface the rest.
+  const duplicateErrors: TemplateSyncError[] = []
+  const byKey = new Map<string, TwilioContentItem>()
+  for (const item of contents) {
+    const language = item.language || 'en'
+    const key = `${item.friendly_name}\u0000${language}`
+    const existing = byKey.get(key)
+    if (!existing) {
+      byKey.set(key, item)
+      continue
+    }
+    const keepNew =
+      item.approval_requests?.status?.toLowerCase() === 'approved' &&
+      existing.approval_requests?.status?.toLowerCase() !== 'approved'
+    const kept = keepNew ? item : existing
+    const skipped = keepNew ? existing : item
+    byKey.set(key, kept)
+    duplicateErrors.push({
+      name: item.friendly_name,
+      language,
+      message: `Duplicate Twilio Content templates share this name+language; kept ${kept.sid} (${kept.approval_requests?.status ?? 'unknown'}), skipped ${skipped.sid} (${skipped.approval_requests?.status ?? 'unknown'})`,
+    })
+  }
+
+  const rows = [...byKey.values()].map((item) => ({
+    account_id: accountId,
+    user_id: userId,
+    ...mapTwilioContentToRow(item),
+    updated_at: new Date().toISOString(),
+  }))
+
+  const { inserted, updated, errors } = await upsertTemplateRows(
+    supabase,
+    accountId,
+    rows,
+  )
+  errors.push(...duplicateErrors)
+
+  return NextResponse.json({
+    success: errors.length === 0,
+    total: contents.length,
+    inserted,
+    updated,
+    errors,
+    truncated: pageCount >= PAGE_CAP && nextUrl !== null,
+  })
+}
+
 export async function POST() {
   try {
     const supabase = await createClient()
@@ -166,6 +369,15 @@ export async function POST() {
       )
     }
 
+    if (config.provider === 'twilio') {
+      return syncTwilioContentTemplates({
+        supabase,
+        config,
+        accountId,
+        userId: user.id,
+      })
+    }
+
     if (!config.waba_id) {
       return NextResponse.json(
         {
@@ -182,7 +394,6 @@ export async function POST() {
     let nextUrl:
       | string
       | null = `${META_API_BASE}/${config.waba_id}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score`
-    const PAGE_CAP = 20
     let pageCount = 0
 
     while (nextUrl && pageCount < PAGE_CAP) {
@@ -210,11 +421,7 @@ export async function POST() {
       nextUrl = metaBody.paging?.next ?? null
     }
 
-    let inserted = 0
-    let updated = 0
-    const errors: { name: string; language: string; message: string }[] = []
-
-    for (const t of metaTemplates) {
+    const rows = metaTemplates.map((t) => {
       const body = (t.components ?? []).find((c) => c.type === 'BODY')
       const header = (t.components ?? []).find((c) => c.type === 'HEADER')
       const footer = (t.components ?? []).find((c) => c.type === 'FOOTER')
@@ -232,7 +439,7 @@ export async function POST() {
           ? headerFormat.toLowerCase()
           : null
 
-      const row = {
+      return {
         // Account tenancy + user audit, same split as the submit
         // route. account_id is NOT NULL on message_templates
         // post-017, so an INSERT without it errors.
@@ -253,53 +460,13 @@ export async function POST() {
         quality_score: normalizeQualityScore(t.quality_score),
         updated_at: new Date().toISOString(),
       }
+    })
 
-      const { data: existing, error: lookupErr } = await supabase
-        .from('message_templates')
-        .select('id')
-        .eq('account_id', accountId)
-        .eq('name', t.name)
-        .eq('language', t.language)
-        .maybeSingle()
-
-      if (lookupErr) {
-        errors.push({
-          name: t.name,
-          language: t.language,
-          message: lookupErr.message,
-        })
-        continue
-      }
-
-      if (existing?.id) {
-        const { error: updErr } = await supabase
-          .from('message_templates')
-          .update(row)
-          .eq('id', existing.id)
-        if (updErr) {
-          errors.push({
-            name: t.name,
-            language: t.language,
-            message: updErr.message,
-          })
-        } else {
-          updated++
-        }
-      } else {
-        const { error: insErr } = await supabase
-          .from('message_templates')
-          .insert(row)
-        if (insErr) {
-          errors.push({
-            name: t.name,
-            language: t.language,
-            message: insErr.message,
-          })
-        } else {
-          inserted++
-        }
-      }
-    }
+    const { inserted, updated, errors } = await upsertTemplateRows(
+      supabase,
+      accountId,
+      rows,
+    )
 
     return NextResponse.json({
       success: errors.length === 0,

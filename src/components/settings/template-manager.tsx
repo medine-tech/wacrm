@@ -45,6 +45,7 @@ import type {
   MessageTemplate,
   TemplateButton,
   TemplateSampleValues,
+  WhatsAppProvider,
 } from '@/types';
 import { templateStatusConfig } from '@/lib/template-status';
 import {
@@ -125,10 +126,15 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 
 export function TemplateManager() {
   const supabase = createClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, accountId, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  // Twilio accounts manage templates in the Twilio Console — the
+  // create/edit/delete affordances are hidden and Sync becomes the
+  // only write path. Defaults to 'meta' (also for unconfigured
+  // accounts) so the Meta UX stays untouched while the row loads.
+  const [provider, setProvider] = useState<WhatsAppProvider>('meta');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -184,6 +190,31 @@ export function TemplateManager() {
     fetchTemplates(user.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user?.id]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('whatsapp_config')
+        .select('provider')
+        .eq('account_id', accountId)
+        .maybeSingle();
+      if (error) {
+        console.error('Failed to load provider:', error);
+        return;
+      }
+      if (!cancelled) {
+        setProvider(data?.provider === 'twilio' ? 'twilio' : 'meta');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId]);
+
+  const isTwilio = provider === 'twilio';
 
   async function fetchTemplates(userId: string) {
     try {
@@ -309,7 +340,7 @@ export function TemplateManager() {
         throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
       }
       toast.success(
-        `Synced ${data.total} template${data.total === 1 ? '' : 's'} from Meta` +
+        `Synced ${data.total} template${data.total === 1 ? '' : 's'} from ${isTwilio ? 'Twilio' : 'Meta'}` +
           (data.inserted || data.updated
             ? ` (${data.inserted} new, ${data.updated} updated)`
             : ''),
@@ -484,7 +515,9 @@ export function TemplateManager() {
       <SettingsPanelHead
         title="Message templates"
         description={
-          'Create templates and submit them to Meta for approval. Use "Sync from Meta" to pull templates approved elsewhere.'
+          isTwilio
+            ? 'Templates are created and approved in the Twilio Console. Use "Sync from Twilio" to import them here.'
+            : 'Create templates and submit them to Meta for approval. Use "Sync from Meta" to pull templates approved elsewhere.'
         }
         action={
           <div className="flex items-center gap-2">
@@ -492,25 +525,46 @@ export function TemplateManager() {
               variant="outline"
               onClick={handleSyncFromMeta}
               disabled={syncing}
-              title="Pull approved templates from your Meta WhatsApp Business Account"
+              title={
+                isTwilio
+                  ? 'Pull Content templates and their WhatsApp approval status from Twilio'
+                  : 'Pull approved templates from your Meta WhatsApp Business Account'
+              }
             >
               <RefreshCw className={`size-4 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing…' : 'Sync from Meta'}
+              {syncing ? 'Syncing…' : isTwilio ? 'Sync from Twilio' : 'Sync from Meta'}
             </Button>
-            <Button onClick={openCreate}>
-              <Plus className="size-4" />
-              New Template
-            </Button>
+            {!isTwilio && (
+              <Button onClick={openCreate}>
+                <Plus className="size-4" />
+                New Template
+              </Button>
+            )}
           </div>
         }
       />
+
+      {isTwilio && (
+        <div className="flex items-start gap-2 rounded border border-blue-700/40 bg-blue-950/30 px-3 py-2 text-xs text-blue-300">
+          <AlertCircle className="size-4 mt-0.5 shrink-0" />
+          <p>
+            This account uses the Twilio provider. Templates are created,
+            edited, and deleted in the <strong>Twilio Console</strong> —{' '}
+            <strong>Sync from Twilio</strong> imports them (with their WhatsApp
+            approval status) so approved templates can be used in broadcasts
+            and the inbox.
+          </p>
+        </div>
+      )}
 
       {templates.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <p className="text-muted-foreground text-sm">No templates yet.</p>
             <p className="text-muted-foreground text-xs mt-1">
-              Create your first message template to get started.
+              {isTwilio
+                ? 'Use "Sync from Twilio" to import your Content templates.'
+                : 'Create your first message template to get started.'}
             </p>
           </CardContent>
         </Card>
@@ -571,7 +625,7 @@ export function TemplateManager() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0 ml-2">
-                    {statusKey === 'APPROVED' && (
+                    {!isTwilio && statusKey === 'APPROVED' && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -584,7 +638,7 @@ export function TemplateManager() {
                         Edit
                       </Button>
                     )}
-                    {(statusKey === 'REJECTED' || statusKey === 'PAUSED') && (
+                    {!isTwilio && (statusKey === 'REJECTED' || statusKey === 'PAUSED') && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -597,29 +651,31 @@ export function TemplateManager() {
                         Resubmit
                       </Button>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setTemplateToDelete(template)}
-                      disabled={deletingId === template.id}
-                      aria-label={
-                        template.meta_template_id
-                          ? 'Delete template from Meta and locally'
-                          : 'Delete template locally'
-                      }
-                      title={
-                        template.meta_template_id
-                          ? 'Delete from Meta and locally'
-                          : 'Delete locally'
-                      }
-                      className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
-                    >
-                      {deletingId === template.id ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-4" />
-                      )}
-                    </Button>
+                    {!isTwilio && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setTemplateToDelete(template)}
+                        disabled={deletingId === template.id}
+                        aria-label={
+                          template.meta_template_id
+                            ? 'Delete template from Meta and locally'
+                            : 'Delete template locally'
+                        }
+                        title={
+                          template.meta_template_id
+                            ? 'Delete from Meta and locally'
+                            : 'Delete locally'
+                        }
+                        className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
+                      >
+                        {deletingId === template.id ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-4" />
+                        )}
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>

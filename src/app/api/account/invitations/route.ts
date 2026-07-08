@@ -46,10 +46,9 @@ import {
 //      operator to set an env var.
 //   3. `Host` header + the protocol the request arrived on —
 //      bare deployments without a proxy.
-//   4. Last-resort marketing-site fallback. Only hit if the
-//      request has no Host header at all, which is essentially
-//      impossible from a real browser. Logs a warning so the
-//      operator can spot the misconfig.
+//   4. Nothing resolved → the POST fails with a 500 telling the
+//      operator to set `NEXT_PUBLIC_SITE_URL`. We never emit a
+//      link pointing at a host this deployment doesn't own.
 //
 // Defense-in-depth: `ALLOWED_INVITE_HOSTS`
 //
@@ -63,16 +62,16 @@ import {
 //
 //   When `ALLOWED_INVITE_HOSTS` is set (comma-separated hostnames),
 //   we validate the derived host against the list. Anything not
-//   on the list falls through to the wacrm.tech fallback with a
-//   loud console.warn. Operators who care about this attack
-//   surface should set this to their canonical hostnames; everyone
-//   else gets today's permissive behavior.
+//   on the list is rejected with a loud console.warn and the POST
+//   fails. Operators who care about this attack surface should set
+//   this to their canonical hostnames; everyone else gets today's
+//   permissive behavior.
 //
-// Previous implementation hard-defaulted to `https://wacrm.tech`
-// (the docs/marketing site, a different repo). Forks that didn't
-// set `NEXT_PUBLIC_SITE_URL` got invite links pointing at the
-// marketing site, which 404s on `/join/<token>`. This resolution
-// chain removes the foot-gun.
+// Previous implementations hard-defaulted to `https://wacrm.tech`
+// (the upstream project's marketing site, a different repo).
+// Deployments that didn't set `NEXT_PUBLIC_SITE_URL` got invite
+// links pointing at a third-party domain, which 404s on
+// `/join/<token>`. Failing loudly removes the foot-gun.
 function parseAllowedHosts(): readonly string[] | null {
   const raw = process.env.ALLOWED_INVITE_HOSTS?.trim();
   if (!raw) return null;
@@ -91,7 +90,7 @@ function isHostAllowed(
   return allowList.includes(hostname.toLowerCase());
 }
 
-function getBaseUrl(request: Request): string {
+function getBaseUrl(request: Request): string | null {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
 
@@ -128,10 +127,10 @@ function getBaseUrl(request: Request): string {
     );
   } else {
     console.warn(
-      "[POST /api/account/invitations] could not derive base URL from request; falling back to marketing domain",
+      "[POST /api/account/invitations] could not derive base URL from request; set NEXT_PUBLIC_SITE_URL",
     );
   }
-  return "https://wacrm.tech";
+  return null;
 }
 
 const MAX_LABEL_LEN = 80;
@@ -214,6 +213,20 @@ export async function POST(request: Request) {
       label = trimmed === "" ? null : trimmed;
     }
 
+    // Resolve the base URL BEFORE inserting the row — if we can't
+    // publish a usable link there's no point creating an invitation
+    // the admin can never share.
+    const baseUrl = getBaseUrl(request);
+    if (!baseUrl) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not determine this deployment's public URL for the invite link. Set NEXT_PUBLIC_SITE_URL.",
+        },
+        { status: 500 },
+      );
+    }
+
     const { token, hash } = generateInviteToken();
 
     const { data, error } = await ctx.supabase
@@ -242,7 +255,7 @@ export async function POST(request: Request) {
         invitation: data,
         // Plaintext payload — visible to the admin exactly once.
         token,
-        url: inviteUrl(token, getBaseUrl(request)),
+        url: inviteUrl(token, baseUrl),
         expiresInDays: expiryDays,
       },
       { status: 201 },

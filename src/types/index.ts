@@ -230,13 +230,29 @@ export interface MessageReaction {
   created_at: string;
 }
 
+export type WhatsAppProvider = 'meta' | 'twilio';
+
 export interface WhatsAppConfig {
   id: string;
   user_id: string;
+  /** 'meta' (default) or 'twilio'. DB default keeps legacy rows on 'meta'. */
+  provider?: WhatsAppProvider;
+  /**
+   * Meta: the Cloud API phone number id. Twilio: the WhatsApp sender
+   * number, digits only (e.g. '584248274759') — same webhook
+   * tenant-routing role on both providers.
+   */
   phone_number_id: string;
   waba_id?: string;
+  /**
+   * Encrypted. Meta: the permanent access token. Twilio: the API key
+   * secret (or auth token when twilio_api_key_sid is unset).
+   */
   access_token: string;
   verify_token?: string;
+  twilio_account_sid?: string;
+  twilio_api_key_sid?: string;
+  twilio_messaging_service_sid?: string;
   status: 'connected' | 'disconnected';
   connected_at?: string;
   /**
@@ -292,6 +308,8 @@ export interface MessageTemplate {
   sample_values?: TemplateSampleValues;
   status?: MessageTemplateStatus;
   meta_template_id?: string;
+  /** Twilio Content SID (HX…) — set by the Twilio template Sync. */
+  twilio_content_sid?: string;
   rejection_reason?: string;
   quality_score?: 'GREEN' | 'YELLOW' | 'RED';
   submission_error?: string;

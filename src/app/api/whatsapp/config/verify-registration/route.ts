@@ -5,6 +5,7 @@ import {
   getSubscribedApps,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
+import { probeTwilioCredentials } from '@/lib/whatsapp/twilio-config'
 
 /**
  * GET /api/whatsapp/config/verify-registration
@@ -27,6 +28,9 @@ import {
  * Returns 200 in every case so the UI can render diagnostic detail
  * rather than a generic error toast. The combined `live` flag is
  * what the UI badges on.
+ *
+ * Twilio rows have no Meta registration lifecycle — for them `live`
+ * is a single Basic-auth credential probe against the Twilio API.
  */
 export async function GET() {
   const supabase = await createClient()
@@ -81,6 +85,46 @@ export async function GET() {
       },
       message:
         'Stored access token can\'t be decrypted — likely ENCRYPTION_KEY changed. Re-enter the token to repair.',
+    })
+  }
+
+  if (config.provider === 'twilio') {
+    if (!config.twilio_account_sid) {
+      return NextResponse.json({
+        live: false,
+        provider: 'twilio',
+        checks: {
+          config_exists: true,
+          token_decryptable: true,
+          twilio_credentials_ok: false,
+        },
+        errors: ['Twilio Account SID is missing — re-save the configuration.'],
+        last_registration_error: null,
+        registered_at: null,
+        subscribed_apps_at: null,
+      })
+    }
+
+    const probe = await probeTwilioCredentials({
+      accountSid: config.twilio_account_sid,
+      apiKeySid: config.twilio_api_key_sid,
+      authSecret: accessToken,
+    })
+
+    return NextResponse.json({
+      live: probe.ok,
+      provider: 'twilio',
+      checks: {
+        config_exists: true,
+        token_decryptable: true,
+        twilio_credentials_ok: probe.ok,
+      },
+      errors: probe.ok
+        ? []
+        : [`Twilio credential check failed: ${probe.message}`],
+      last_registration_error: null,
+      registered_at: null,
+      subscribed_apps_at: null,
     })
   }
 

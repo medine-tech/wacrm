@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -11,6 +12,7 @@ import {
 } from '@/lib/whatsapp/template-validators'
 import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components'
 import { ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle'
+import { TWILIO_TEMPLATE_MANAGEMENT_MESSAGE } from '@/lib/whatsapp/twilio-content-map'
 
 /**
  * Per-template lifecycle endpoint.
@@ -42,6 +44,30 @@ function isDryRun(): boolean {
     process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
     process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1'
   )
+}
+
+/**
+ * Returns a 400 response when the account's provider is Twilio —
+ * template create/edit/delete happens in the Twilio Console; only
+ * Sync touches local rows. Returns null for Meta (and unconfigured)
+ * accounts so the handlers proceed unchanged.
+ */
+async function gateTwilioProvider(
+  supabase: SupabaseClient,
+  accountId: string,
+): Promise<NextResponse | null> {
+  const { data: providerRow } = await supabase
+    .from('whatsapp_config')
+    .select('provider')
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (providerRow?.provider === 'twilio') {
+    return NextResponse.json(
+      { error: TWILIO_TEMPLATE_MANAGEMENT_MESSAGE },
+      { status: 400 },
+    )
+  }
+  return null
 }
 
 export async function PATCH(
@@ -79,6 +105,12 @@ export async function PATCH(
         { status: 403 },
       )
     }
+
+    // Twilio accounts manage templates in the Twilio Console — the
+    // whole edit lifecycle (Meta hsm edit + PENDING flip) is
+    // meaningless for Content templates.
+    const twilioGate = await gateTwilioProvider(supabase, accountId)
+    if (twilioGate) return twilioGate
 
     let payload: TemplatePayload
     try {
@@ -266,6 +298,12 @@ export async function DELETE(
         { status: 403 },
       )
     }
+
+    // Same Twilio-provider gate as PATCH — deleting a synced Content
+    // template locally would only desync the catalog until the next
+    // Sync resurrects it.
+    const twilioGate = await gateTwilioProvider(supabase, accountId)
+    if (twilioGate) return twilioGate
 
     const { data: existing, error: lookupErr } = await supabase
       .from('message_templates')

@@ -28,7 +28,17 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
-import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import type {
+  WhatsAppConfig as WhatsAppConfigType,
+  WhatsAppProvider,
+} from '@/types';
 
 const MASKED_TOKEN = '••••••••••••••••';
 
@@ -61,12 +71,24 @@ export function WhatsAppConfig() {
   // again and overwrites whatever the user typed but hadn't saved yet.
   const loadedAccountIdRef = useRef<string | null>(null);
 
+  const [provider, setProvider] = useState<WhatsAppProvider>('meta');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
+  // The masked secret input is shared between providers: Meta's
+  // permanent access token, or Twilio's API key secret / auth token.
   const [accessToken, setAccessToken] = useState('');
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
+  const [twilioAccountSid, setTwilioAccountSid] = useState('');
+  const [twilioApiKeySid, setTwilioApiKeySid] = useState('');
+  const [twilioMessagingServiceSid, setTwilioMessagingServiceSid] = useState('');
+  const [fromNumber, setFromNumber] = useState('');
+
+  // Provider of the SAVED row — banners about the stored config key on
+  // this, while the form fields key on the (possibly unsaved) selector.
+  const savedProvider: WhatsAppProvider =
+    config?.provider === 'twilio' ? 'twilio' : 'meta';
 
   // True once /register has succeeded on Meta's side (timestamp set
   // in the row). When false, the saved config is metadata-only and
@@ -87,9 +109,14 @@ export function WhatsAppConfig() {
   const [registrationProbe, setRegistrationProbe] =
     useState<RegistrationProbe | null>(null);
 
+  // The Twilio URL carries a placeholder token: TWILIO_WEBHOOK_SECRET
+  // is a server-side env value the browser cannot read, so the user
+  // substitutes it after copying.
   const webhookUrl =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/api/whatsapp/webhook`
+      ? provider === 'twilio'
+        ? `${window.location.origin}/api/whatsapp/webhook/twilio?token=<TWILIO_WEBHOOK_SECRET>`
+        : `${window.location.origin}/api/whatsapp/webhook`
       : '';
 
   const fetchConfig = useCallback(async (acctId: string) => {
@@ -112,9 +139,24 @@ export function WhatsAppConfig() {
       }
 
       if (data) {
+        const rowProvider: WhatsAppProvider =
+          data.provider === 'twilio' ? 'twilio' : 'meta';
         setConfig(data);
-        setPhoneNumberId(data.phone_number_id || '');
-        setWabaId(data.waba_id || '');
+        setProvider(rowProvider);
+        // phone_number_id is provider-overloaded: Meta's Cloud API id,
+        // or Twilio's sender number (digits only). Hydrate only the
+        // fields of the row's own provider so switching the selector
+        // starts from a blank form.
+        setPhoneNumberId(rowProvider === 'meta' ? data.phone_number_id || '' : '');
+        setWabaId(rowProvider === 'meta' ? data.waba_id || '' : '');
+        setTwilioAccountSid(data.twilio_account_sid || '');
+        setTwilioApiKeySid(data.twilio_api_key_sid || '');
+        setTwilioMessagingServiceSid(data.twilio_messaging_service_sid || '');
+        setFromNumber(
+          rowProvider === 'twilio' && data.phone_number_id
+            ? `+${data.phone_number_id}`
+            : ''
+        );
         setAccessToken(MASKED_TOKEN);
         setVerifyToken('');
         setPin('');
@@ -123,6 +165,10 @@ export function WhatsAppConfig() {
         setConfig(null);
         setPhoneNumberId('');
         setWabaId('');
+        setTwilioAccountSid('');
+        setTwilioApiKeySid('');
+        setTwilioMessagingServiceSid('');
+        setFromNumber('');
         setAccessToken('');
         setVerifyToken('');
         setPin('');
@@ -181,40 +227,72 @@ export function WhatsAppConfig() {
   }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
 
   async function handleSave() {
-    if (!phoneNumberId.trim()) {
-      toast.error('Phone Number ID is required');
-      return;
-    }
-    if (!config && (!accessToken.trim() || !tokenEdited)) {
-      toast.error('Access Token is required for initial setup');
-      return;
+    if (provider === 'twilio') {
+      if (!twilioAccountSid.trim()) {
+        toast.error('Twilio Account SID is required');
+        return;
+      }
+      if (!fromNumber.trim()) {
+        toast.error('WhatsApp sender number is required');
+        return;
+      }
+      if (!config && (!accessToken.trim() || !tokenEdited)) {
+        toast.error('API key secret (or Auth Token) is required for initial setup');
+        return;
+      }
+    } else {
+      if (!phoneNumberId.trim()) {
+        toast.error('Phone Number ID is required');
+        return;
+      }
+      if (!config && (!accessToken.trim() || !tokenEdited)) {
+        toast.error('Access Token is required for initial setup');
+        return;
+      }
     }
 
     try {
       setSaving(true);
 
-      // Always POST through the API — it verifies with Meta and encrypts
-      // the access_token server-side with ENCRYPTION_KEY. Skipping this
-      // and writing direct to Supabase stores the token in plaintext,
-      // which then fails decryption on every subsequent health check.
-      const payload: Record<string, unknown> = {
-        phone_number_id: phoneNumberId.trim(),
-        waba_id: wabaId.trim() || null,
-        verify_token: verifyToken.trim() || null,
-        // Optional — only sent when the user filled it in. The server
-        // requires it on first save or when changing numbers; for a
-        // simple token rotation, leaving it blank skips re-register.
-        pin: pin.trim() || null,
-      };
+      // Always POST through the API — it verifies with the provider and
+      // encrypts the secret server-side with ENCRYPTION_KEY. Skipping
+      // this and writing direct to Supabase stores the token in
+      // plaintext, which then fails decryption on every subsequent
+      // health check.
+      const payload: Record<string, unknown> =
+        provider === 'twilio'
+          ? {
+              provider: 'twilio',
+              twilio_account_sid: twilioAccountSid.trim(),
+              twilio_api_key_sid: twilioApiKeySid.trim() || null,
+              from_number: fromNumber.trim(),
+              twilio_messaging_service_sid:
+                twilioMessagingServiceSid.trim() || null,
+            }
+          : {
+              provider: 'meta',
+              phone_number_id: phoneNumberId.trim(),
+              waba_id: wabaId.trim() || null,
+              verify_token: verifyToken.trim() || null,
+              // Optional — only sent when the user filled it in. The server
+              // requires it on first save or when changing numbers; for a
+              // simple token rotation, leaving it blank skips re-register.
+              pin: pin.trim() || null,
+            };
 
       if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
-        payload.access_token = accessToken.trim();
+        payload[provider === 'twilio' ? 'twilio_auth_secret' : 'access_token'] =
+          accessToken.trim();
       } else if (config) {
         // Existing config — reuse stored encrypted token by decrypting on the
-        // server. But our POST handler requires an access_token to verify
-        // with Meta. If the user didn't change the token, we need to signal
-        // that. Simplest: require token re-entry if they're updating.
-        toast.error('Please re-enter the Access Token to save changes');
+        // server. But our POST handler requires the secret to verify with
+        // the provider. If the user didn't change it, we need to signal
+        // that. Simplest: require re-entry if they're updating.
+        toast.error(
+          provider === 'twilio'
+            ? 'Please re-enter the API key secret to save changes'
+            : 'Please re-enter the Access Token to save changes'
+        );
         setSaving(false);
         return;
       }
@@ -239,7 +317,15 @@ export function WhatsAppConfig() {
       //                         failed; UI shows the specific error
       //                         and a retry path. registration_error
       //                         is human-readable from Meta.
-      if (data.registered === false && data.registration_error) {
+      if (provider === 'twilio') {
+        // No registration lifecycle on Twilio — a verified probe means
+        // outbound sending works; inbound needs the webhook URL below
+        // configured on the sender.
+        toast.success(
+          'Twilio credentials verified and saved. Point your Twilio sender webhook at the Callback URL below to receive messages.',
+          { duration: 10000 },
+        );
+      } else if (data.registered === false && data.registration_error) {
         toast.error(
           `Saved, but Meta couldn't register the number: ${data.registration_error}`,
           { duration: 12000 },
@@ -350,6 +436,10 @@ export function WhatsAppConfig() {
       setConfig(null);
       setPhoneNumberId('');
       setWabaId('');
+      setTwilioAccountSid('');
+      setTwilioApiKeySid('');
+      setTwilioMessagingServiceSid('');
+      setFromNumber('');
       setAccessToken('');
       setVerifyToken('');
       setTokenEdited(false);
@@ -389,7 +479,11 @@ export function WhatsAppConfig() {
     <section className="animate-in fade-in-50 duration-200">
       <SettingsPanelHead
         title="WhatsApp connection"
-        description="Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here."
+        description={
+          provider === 'twilio'
+            ? 'Connect your WhatsApp number through the Twilio API. Credentials and webhook setup all live here.'
+            : 'Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here.'
+        }
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
@@ -443,9 +537,13 @@ export function WhatsAppConfig() {
           </div>
           <AlertDescription className="text-muted-foreground">
             {connectionStatus === 'connected'
-              ? 'Your access token authenticates with Meta. See Registration status below for whether webhooks are actually wired.'
+              ? savedProvider === 'twilio'
+                ? 'Your credentials authenticate with Twilio. Point your Twilio sender webhook at the Callback URL below to receive inbound messages.'
+                : 'Your access token authenticates with Meta. See Registration status below for whether webhooks are actually wired.'
               : statusMessage ||
-                'Configure your Meta API credentials below to connect your WhatsApp Business account.'}
+                (provider === 'twilio'
+                  ? 'Configure your Twilio API credentials below to connect your WhatsApp sender.'
+                  : 'Configure your Meta API credentials below to connect your WhatsApp Business account.')}
           </AlertDescription>
         </Alert>
 
@@ -453,8 +551,10 @@ export function WhatsAppConfig() {
             Credentials being valid is necessary but not sufficient;
             without a successful /register call the number won't
             receive inbound events. Surface this dimension separately
-            so users don't trust a misleading green banner. */}
-        {config && (
+            so users don't trust a misleading green banner.
+            Meta-only: Twilio senders are provisioned in the Twilio
+            Console and have no /register lifecycle to report on. */}
+        {config && savedProvider === 'meta' && (
           <Alert
             className={
               isRegistered
@@ -562,10 +662,30 @@ export function WhatsAppConfig() {
           <CardHeader>
             <CardTitle className="text-foreground">API Credentials</CardTitle>
             <CardDescription className="text-muted-foreground">
-              Enter your Meta WhatsApp Business API credentials.
+              {provider === 'twilio'
+                ? 'Enter your Twilio API credentials.'
+                : 'Enter your Meta WhatsApp Business API credentials.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Provider</Label>
+              <Select
+                value={provider}
+                onValueChange={(v) => setProvider(v as WhatsAppProvider)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="meta">Meta Cloud API</SelectItem>
+                  <SelectItem value="twilio">Twilio</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {provider === 'meta' ? (
+              <>
             <div className="space-y-2">
               <Label className="text-muted-foreground">Phone Number ID</Label>
               <Input
@@ -666,6 +786,112 @@ export function WhatsAppConfig() {
                 untouched.
               </p>
             </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Account SID</Label>
+                  <Input
+                    placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={twilioAccountSid}
+                    onChange={(e) => setTwilioAccountSid(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Found on the Twilio Console home page (starts with AC).
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">
+                    API Key SID
+                    <span className="ml-1 text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    placeholder="SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={twilioApiKeySid}
+                    onChange={(e) => setTwilioApiKeySid(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Recommended — create one in Twilio Console → Account →
+                    API keys &amp; tokens. Leave blank to authenticate with
+                    the account Auth Token instead.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">
+                    API Key Secret / Auth Token
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      type={showToken ? 'text' : 'password'}
+                      placeholder="Enter your API key secret or Auth Token"
+                      value={accessToken}
+                      onChange={(e) => {
+                        setAccessToken(e.target.value);
+                        setTokenEdited(true);
+                      }}
+                      onFocus={() => {
+                        if (accessToken === MASKED_TOKEN) {
+                          setAccessToken('');
+                          setTokenEdited(true);
+                        }
+                      }}
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowToken(!showToken)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {config && !tokenEdited && (
+                    <p className="text-xs text-muted-foreground">
+                      Secret is hidden for security. Re-enter it to update configuration.
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    The API key secret when an API Key SID is set above;
+                    otherwise the account Auth Token.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">WhatsApp Sender Number</Label>
+                  <Input
+                    placeholder="+14155238886"
+                    value={fromNumber}
+                    onChange={(e) => setFromNumber(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Your WhatsApp-enabled Twilio number in E.164 format
+                    (with country code).
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">
+                    Messaging Service SID
+                    <span className="ml-1 text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    placeholder="MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={twilioMessagingServiceSid}
+                    onChange={(e) => setTwilioMessagingServiceSid(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    When set, messages are sent through the Messaging
+                    Service instead of directly from the sender number.
+                  </p>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -674,7 +900,9 @@ export function WhatsAppConfig() {
           <CardHeader>
             <CardTitle className="text-foreground">Webhook Configuration</CardTitle>
             <CardDescription className="text-muted-foreground">
-              Use this URL as your webhook callback in the Meta App Dashboard.
+              {provider === 'twilio'
+                ? 'Set this URL as the incoming-message webhook on your Twilio WhatsApp sender (or Messaging Service).'
+                : 'Use this URL as your webhook callback in the Meta App Dashboard.'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -695,6 +923,18 @@ export function WhatsAppConfig() {
                   <Copy className="size-4" />
                 </Button>
               </div>
+              {provider === 'twilio' && (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Replace{' '}
+                  <code className="text-muted-foreground">
+                    &lt;TWILIO_WEBHOOK_SECRET&gt;
+                  </code>{' '}
+                  with the value of the{' '}
+                  <strong className="text-muted-foreground">TWILIO_WEBHOOK_SECRET</strong>{' '}
+                  environment variable after copying — it is a server-side
+                  secret this page cannot read.
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -758,6 +998,58 @@ export function WhatsAppConfig() {
 
       {/* Setup Instructions Sidebar */}
       <div>
+        {provider === 'twilio' ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-foreground text-base">Setup Instructions</CardTitle>
+              <CardDescription className="text-muted-foreground">
+                Follow these steps to connect WhatsApp through Twilio.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
+                <li>
+                  Register a{' '}
+                  <strong className="text-foreground">WhatsApp sender</strong> in
+                  Twilio Console → Messaging → Senders → WhatsApp senders
+                  (or use the WhatsApp sandbox for testing).
+                </li>
+                <li>
+                  Copy your <strong className="text-foreground">Account SID</strong>{' '}
+                  from the Console home page and create an{' '}
+                  <strong className="text-foreground">API key</strong> under
+                  Account → API keys &amp; tokens.
+                </li>
+                <li>
+                  Enter the Account SID, API key SID + secret, and the
+                  sender number here, then click{' '}
+                  <strong className="text-foreground">Save Configuration</strong>.
+                </li>
+                <li>
+                  Set the <strong className="text-foreground">Webhook Callback URL</strong>{' '}
+                  above as the &quot;incoming message&quot; webhook on the
+                  sender (or its Messaging Service) so replies reach wacrm.
+                </li>
+                <li>
+                  Templates are managed in Twilio Console → Content — use
+                  the template Sync in wacrm to import approved ones.
+                </li>
+              </ol>
+
+              <div className="mt-4 pt-4 border-t border-border">
+                <a
+                  href="https://www.twilio.com/docs/whatsapp"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors"
+                >
+                  <ExternalLink className="size-3.5" />
+                  Twilio WhatsApp API Documentation
+                </a>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
         <Card>
           <CardHeader>
             <CardTitle className="text-foreground text-base">Setup Instructions</CardTitle>
@@ -849,6 +1141,7 @@ export function WhatsAppConfig() {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
     </div>
     </section>

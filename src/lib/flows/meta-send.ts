@@ -7,6 +7,11 @@ import {
   type InteractiveListSection,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
+import {
+  sendTextMessage as sendTwilioTextMessage,
+  sendMediaMessage as sendTwilioMediaMessage,
+  twilioCredentialsFromConfig,
+} from '@/lib/whatsapp/twilio-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   sanitizePhoneForMeta,
@@ -89,6 +94,14 @@ export async function engineSendText(
   const accessToken = decrypt(config.access_token)
 
   const attempt = async (phone: string): Promise<string> => {
+    if (config.provider === 'twilio') {
+      const r = await sendTwilioTextMessage({
+        credentials: twilioCredentialsFromConfig({ config, accessToken }),
+        to: phone,
+        text: args.text,
+      })
+      return r.messageId
+    }
     const r = await sendTextMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
@@ -198,6 +211,17 @@ export async function engineSendMedia(
   const accessToken = decrypt(config.access_token)
 
   const attempt = async (phone: string): Promise<string> => {
+    if (config.provider === 'twilio') {
+      // Twilio derives kind + filename from the URL; only the caption
+      // travels alongside the media link.
+      const r = await sendTwilioMediaMessage({
+        credentials: twilioCredentialsFromConfig({ config, accessToken }),
+        to: phone,
+        link: args.link,
+        caption: args.caption,
+      })
+      return r.messageId
+    }
     const r = await sendMediaMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
@@ -345,6 +369,12 @@ async function sendInteractiveViaMeta(
     .single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
+  }
+
+  if (config.provider === 'twilio') {
+    throw new Error(
+      'Interactive buttons/lists are not supported on the Twilio provider — Twilio requires pre-registered Content templates (quick-reply/list) instead of raw interactive messages.'
+    )
   }
 
   const accessToken = decrypt(config.access_token)

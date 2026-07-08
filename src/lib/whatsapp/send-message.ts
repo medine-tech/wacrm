@@ -6,7 +6,8 @@
 // Given a conversation and message params, this:
 //   1. validates the params for the message type,
 //   2. loads the conversation + contact + WhatsApp config,
-//   3. sends to Meta (with phone-variant retry + contact auto-fix),
+//   3. sends via the configured provider — Meta (with phone-variant
+//      retry + contact auto-fix) or Twilio,
 //   4. persists the message + updates the conversation,
 //   5. pauses any active Flow run for the contact (agent stepped in).
 //
@@ -27,7 +28,17 @@ import {
   sendMediaMessage,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api';
+import {
+  sendTextMessage as sendTwilioTextMessage,
+  sendTemplateMessage as sendTwilioTemplateMessage,
+  sendMediaMessage as sendTwilioMediaMessage,
+  twilioCredentialsFromConfig,
+} from '@/lib/whatsapp/twilio-api';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import {
+  resolveTemplateRowForSend,
+  TemplateResolutionError,
+} from '@/lib/whatsapp/template-row-resolve';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   sanitizePhoneForMeta,
@@ -280,17 +291,30 @@ export async function sendMessageToConversation(
     }
   }
 
+  const isTwilio = config.provider === 'twilio';
+
   // Template row (for header + button components). isMessageTemplate
   // guards against a malformed local row crashing the send-builder.
   let templateRow: MessageTemplate | null = null;
+  let resolvedTemplateLanguage = templateLanguage || 'en_US';
   if (messageType === 'template' && templateName) {
-    const { data } = await db
-      .from('message_templates')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('name', templateName)
-      .eq('language', templateLanguage || 'en_US')
-      .maybeSingle();
+    let data: Record<string, unknown> | null;
+    try {
+      const resolution = await resolveTemplateRowForSend({
+        db,
+        accountId,
+        templateName,
+        templateLanguage,
+        provider: isTwilio ? 'twilio' : 'meta',
+      });
+      data = resolution.row;
+      resolvedTemplateLanguage = resolution.language;
+    } catch (err) {
+      if (err instanceof TemplateResolutionError) {
+        throw new SendMessageError('bad_request', err.message, 400);
+      }
+      throw err;
+    }
     if (data && !isMessageTemplate(data)) {
       throw new SendMessageError(
         'template_malformed',
@@ -298,17 +322,49 @@ export async function sendMessageToConversation(
         500
       );
     }
-    templateRow = data ?? null;
+    templateRow = (data as MessageTemplate | null) ?? null;
   }
 
   const attempt = async (phone: string): Promise<string> => {
+    if (isTwilio) {
+      // Twilio has no outbound quoted-reply parameter — contextMessageId
+      // is dropped silently (reply_to_message_id still renders the quote
+      // in the CRM UI).
+      const credentials = twilioCredentialsFromConfig({ config, accessToken });
+      if (messageType === 'template') {
+        const result = await sendTwilioTemplateMessage({
+          credentials,
+          to: phone,
+          templateName: templateName!,
+          template: templateRow ?? undefined,
+          messageParams: templateMessageParams ?? undefined,
+          params: templateParams || [],
+        });
+        return result.messageId;
+      }
+      if (isMediaKind) {
+        const result = await sendTwilioMediaMessage({
+          credentials,
+          to: phone,
+          link: mediaUrl!,
+          caption: contentText || undefined,
+        });
+        return result.messageId;
+      }
+      const result = await sendTwilioTextMessage({
+        credentials,
+        to: phone,
+        text: contentText!,
+      });
+      return result.messageId;
+    }
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
         phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
         templateName: templateName!,
-        language: templateLanguage || 'en_US',
+        language: resolvedTemplateLanguage,
         template: templateRow ?? undefined,
         messageParams: templateMessageParams ?? undefined,
         params: templateParams || [],
@@ -368,6 +424,12 @@ export async function sendMessageToConversation(
 
     if (lastError) throw lastError;
   } catch (err) {
+    if (isTwilio) {
+      const message =
+        err instanceof Error ? err.message : 'Unknown Twilio API error';
+      console.error('[send-message] Twilio send failed:', message);
+      throw new SendMessageError('twilio_error', message, 502);
+    }
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
     console.error('[send-message] Meta send failed for all variants:', message);
@@ -375,8 +437,9 @@ export async function sendMessageToConversation(
   }
 
   if (workingPhone !== sanitizedPhone) {
+    const maskPhone = (phone: string) => `…${phone.slice(-4)}`;
     console.log(
-      `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
+      `[send-message] Auto-corrected contact phone: ${maskPhone(sanitizedPhone)} → ${maskPhone(workingPhone)}`
     );
     await db
       .from('contacts')

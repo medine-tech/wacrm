@@ -88,8 +88,17 @@ export async function middleware(request: NextRequest) {
   return supabaseResponse
 }
 
+// NOTE: Next 16 renamed the `middleware` file convention to `proxy`
+// (node_modules/next/dist/docs/.../proxy.md). `middleware.ts` is
+// deprecated but still fully functional; the rename to proxy.ts is a
+// separate migration (`npx @next/codemod middleware-to-proxy`).
+//
+// Webhook paths (/api/whatsapp/webhook and /api/whatsapp/webhook/twilio)
+// are excluded from the matcher: they authenticate with their own
+// signatures/shared secrets and must not pay a per-request
+// supabase.auth.getUser() round-trip on every provider POST.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/whatsapp/webhook|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
