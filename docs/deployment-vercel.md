@@ -146,3 +146,31 @@ VAPID vars are set the dispatch endpoint reports `push_not_configured`
 same-origin (`worker-src 'self'`), the subscribe POST is same-origin
 (`connect-src 'self'`), and push delivery is browser↔push-service
 traffic outside the page CSP.
+
+## 7. Database security posture
+
+Run the Supabase **Security Advisor** (Dashboard → Advisors, or the
+Management API `/advisors/security`) after each migration. The project
+is hardened by `039_security_hardening.sql`; the remaining advisor
+lints are intentional or plan-gated:
+
+- **SECURITY DEFINER functions still executable by authenticated / anon**
+  — only the genuine client RPCs (`peek_invitation` [anon, pre-login
+  /join], `redeem_invitation`, `set_member_role`, `remove_account_member`,
+  `transfer_account_ownership`, `touch_presence`) and the
+  `is_account_member` RLS helper. All validate `auth.uid()` internally
+  and must stay callable by the querying role. Trigger functions and
+  server-only functions have had client EXECUTE revoked.
+- **`extension_in_public` (vector, pg_net)** — left in `public`. Moving
+  installed extensions post-hoc breaks the `pgvector` column types and
+  the `pg_net` push-dispatch trigger; not worth it for a namespace-only
+  warning.
+- **`auth_leaked_password_protection`** — HaveIBeenPwned check requires a
+  Supabase **Pro** plan. Enable it (`password_hibp_enabled`) after
+  upgrading. Password policy is otherwise min-10-chars, OTP expiry 15 min,
+  TOTP MFA available, refresh-token rotation on, password-change email
+  alerts on.
+
+RLS is enabled on every public table (0 ERROR-level lints). The public
+storage buckets serve object URLs but no longer allow anonymous or
+cross-tenant object listing.
