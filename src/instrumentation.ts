@@ -4,11 +4,6 @@ import * as Sentry from '@sentry/nextjs'
 // runtime-appropriate Sentry init; the imports are dynamic so the edge
 // bundle never pulls in the Node config and vice versa.
 export async function register() {
-  console.log(
-    '[instrumentation] register runtime=%s dsn=%s',
-    process.env.NEXT_RUNTIME,
-    process.env.NEXT_PUBLIC_SENTRY_DSN ? 'set' : 'MISSING',
-  )
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     await import('./sentry.server.config')
   }

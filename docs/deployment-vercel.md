@@ -38,6 +38,8 @@ for Production (and Preview if you use it).
 | `AUTOMATION_CRON_SECRET` | Optional | Only for external pingers that send the `x-cron-secret` header instead. |
 | `RESEND_API_KEY` | Email invites | Resend API key. Together with `EMAIL_FROM`, enables emailing team invites; when either is unset invites stay link-only. |
 | `EMAIL_FROM` | Email invites | From header, e.g. `WACRM <no-reply@medine.tech>`. Domain must be verified in Resend. |
+| `NEXT_PUBLIC_SENTRY_DSN` | Error monitoring | Enables Sentry (SDK no-ops when unset). Public value; ships in the client bundle. |
+| `SENTRY_AUTH_TOKEN` | Optional (build) | Enables source-map upload for readable stack traces. Build-time secret only. Without it, errors are still captured with minified frames. |
 | `NEXT_PUBLIC_APP_LOCALE` | Optional | Default `en`. |
 | `ALLOWED_INVITE_HOSTS` | Optional | See `.env.local.example`. |
 
