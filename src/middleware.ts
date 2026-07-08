@@ -101,8 +101,15 @@ export async function middleware(request: NextRequest) {
 // `monitoring` (the Sentry tunnel route, configured in next.config.ts)
 // is excluded too — it's a high-frequency event forwarder that needs
 // no session and shouldn't pay the auth round-trip.
+//
+// `sw.js` (the push service worker, served from public/ at /sw.js with
+// scope '/') and `api/notifications/push-dispatch` (the server-to-server
+// push dispatch endpoint the pg_net trigger POSTs to, Bearer-authed) are
+// excluded for the same reason: neither carries a user session and both
+// should skip the getUser() round-trip. `api/notifications/push/subscribe`
+// is deliberately NOT excluded — it needs the session to identify the user.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|monitoring|api/whatsapp/webhook|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|monitoring|sw.js|api/whatsapp/webhook|api/notifications/push-dispatch|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

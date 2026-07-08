@@ -40,6 +40,10 @@ for Production (and Preview if you use it).
 | `EMAIL_FROM` | Email invites | From header, e.g. `WACRM <no-reply@medine.tech>`. Domain must be verified in Resend. |
 | `NEXT_PUBLIC_SENTRY_DSN` | Error monitoring | Enables Sentry (SDK no-ops when unset). Public value; ships in the client bundle. |
 | `SENTRY_AUTH_TOKEN` | Optional (build) | Enables source-map upload for readable stack traces. Build-time secret only. Without it, errors are still captured with minified frames. |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | Web push | Public VAPID key; ships in the client bundle so the browser can subscribe. Push disabled unless all three VAPID vars are set. |
+| `VAPID_PRIVATE_KEY` | Web push | Private VAPID key. Server secret; never client-side. |
+| `VAPID_SUBJECT` | Web push | VAPID contact, `mailto:` or `https:` (e.g. `mailto:ops@medine.tech`). |
+| `NOTIFICATIONS_PUSH_SECRET` | Web push | `openssl rand -hex 32`. Bearer secret the pg_net trigger sends to `/api/notifications/push-dispatch`; must match the `push_dispatch_secret` Vault secret. Dispatch fails closed (503) when unset. |
 | `NEXT_PUBLIC_APP_LOCALE` | Optional | Default `en`. |
 | `ALLOWED_INVITE_HOSTS` | Optional | See `.env.local.example`. |
 
@@ -105,3 +109,40 @@ Webhook and broadcast routes export `maxDuration = 60`. The inbound
 processing budget (automations + flows + AI auto-reply + outbound
 webhook delivery) can approach that ceiling — keep Fluid Compute
 enabled on the Vercel project so background work isn't cut off.
+
+## 6. Web push notifications
+
+Push is the **real-time** notification channel: the moment a
+conversation is assigned or a customer replies, the agent gets a
+desktop/browser notification even when WACRM isn't open. It sits on
+top of the existing **email-timeout fallback** (`/api/notifications/cron`,
+section 3) — push fires immediately on the notification insert; the
+email digest still fires later if the notification stays unread and the
+agent is away. The two compose; neither replaces the other.
+
+How it wires together on a notification INSERT:
+
+1. A Postgres `pg_net` trigger (`notify_push_dispatch`, migration
+   `038_web_push.sql`) POSTs `{ notification_id }` to
+   `/api/notifications/push-dispatch` with `Authorization: Bearer`.
+2. The dispatch endpoint (service role) loads the notification and the
+   recipient's `push_subscriptions`, sends Web Push via VAPID, and
+   prunes dead subscriptions (404/410).
+
+Set the four `*VAPID*` / `NOTIFICATIONS_PUSH_SECRET` env vars in the
+table above (generate the key pair with `npx web-push
+generate-vapid-keys`). Then, as the Supabase operator, create the two
+Vault secrets the trigger reads (they are referenced by name only, so
+no secret lives in the migration):
+
+- `push_dispatch_url` — the absolute URL of the dispatch endpoint,
+  e.g. `https://wacrm.medine.tech/api/notifications/push-dispatch`.
+- `push_dispatch_secret` — the same value as `NOTIFICATIONS_PUSH_SECRET`.
+
+Until both Vault secrets exist the trigger no-ops, and until all three
+VAPID vars are set the dispatch endpoint reports `push_not_configured`
+— so the feature is dormant and harmless when unconfigured. No CSP or
+`vercel.json` change is needed: the service worker (`/sw.js`) is
+same-origin (`worker-src 'self'`), the subscribe POST is same-origin
+(`connect-src 'self'`), and push delivery is browser↔push-service
+traffic outside the page CSP.

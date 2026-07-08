@@ -308,6 +308,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     const supabase = createClient();
+    // Tear down this browser's push subscription BEFORE dropping the
+    // session. A push endpoint is origin-scoped, not session-scoped, so
+    // on a shared browser leaving it mapped to the departing user would
+    // deliver their customer-PII notifications to whoever logs in next.
+    // The DELETE must run while still authenticated. Never block logout.
+    try {
+      if (
+        typeof navigator !== "undefined" &&
+        "serviceWorker" in navigator
+      ) {
+        const registration = await navigator.serviceWorker.getRegistration();
+        const subscription = await registration?.pushManager.getSubscription();
+        if (subscription) {
+          await fetch("/api/notifications/push/subscribe", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: subscription.endpoint }),
+            keepalive: true,
+          });
+          await subscription.unsubscribe();
+        }
+      }
+    } catch {
+      // Push teardown is best-effort; a failure must not wedge logout.
+    }
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);

@@ -6,6 +6,7 @@ import { Loader2, Upload, Trash2, Mail, CircleAlert } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { usePushNotifications } from '@/hooks/use-push-notifications';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,6 +46,12 @@ export function ProfileForm() {
   const [emailChangePending, setEmailChangePending] = useState(false);
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [savingNotify, setSavingNotify] = useState(false);
+  const {
+    state: pushState,
+    enable: enablePush,
+    disable: disablePush,
+    busy: pushBusy,
+  } = usePushNotifications();
 
   // Seed form state once the profile loads.
   useEffect(() => {
@@ -75,6 +82,21 @@ export function ProfileForm() {
     toast.success(
       next ? 'Email notifications on' : 'Email notifications off',
     );
+  };
+
+  // Browser push is managed entirely client-side by the hook (permission
+  // prompt, subscription, and the subscribe/unsubscribe API round-trip).
+  const onTogglePush = async (next: boolean) => {
+    try {
+      const result = next ? await enablePush() : await disablePush();
+      if (!next) {
+        toast.success('Browser push notifications off');
+      } else if (result === 'subscribed') {
+        toast.success('Browser push notifications on');
+      }
+    } catch {
+      toast.error('Could not update browser push notifications');
+    }
   };
 
   // Cleanup object URLs to avoid leaks.
@@ -382,7 +404,7 @@ export function ProfileForm() {
           description="Stay in the loop when you step away from the app."
         />
         <Card>
-          <CardContent>
+          <CardContent className="space-y-5">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <Label
@@ -403,6 +425,46 @@ export function ProfileForm() {
                 checked={notifyEmail}
                 onCheckedChange={onToggleNotifyEmail}
                 disabled={savingNotify || !profile}
+              />
+            </div>
+
+            <div className="border-t border-border" />
+
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <Label htmlFor="notify-push" className="text-foreground">
+                  Browser push notifications
+                </Label>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Get a desktop/browser notification the moment a
+                  conversation is assigned to you or a customer replies —
+                  even when WACRM isn&apos;t open.
+                </p>
+                {pushState === 'denied' && (
+                  <p className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+                    <span>
+                      Notifications are blocked for this site. Re-enable them
+                      in your browser settings, then switch this on.
+                    </span>
+                  </p>
+                )}
+                {pushState === 'unsupported' && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Not available in this browser.
+                  </p>
+                )}
+              </div>
+              <Switch
+                id="notify-push"
+                checked={pushState === 'subscribed'}
+                onCheckedChange={onTogglePush}
+                disabled={
+                  pushBusy ||
+                  !profile ||
+                  pushState === 'unsupported' ||
+                  pushState === 'denied'
+                }
               />
             </div>
           </CardContent>

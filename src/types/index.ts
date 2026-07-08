@@ -183,6 +183,23 @@ export interface Notification {
   created_at: string;
 }
 
+// ============================================================
+// Web push subscriptions (migration 038)
+// ============================================================
+
+/** A single browser/OS push endpoint the user has opted into. */
+export interface PushSubscriptionRow {
+  id: string;
+  user_id: string;
+  account_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  user_agent?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+}
+
 export type SenderType = 'customer' | 'agent' | 'bot';
 export type ContentType =
   | 'text'
