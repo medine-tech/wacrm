@@ -22,15 +22,23 @@
 // and we only touch the fields we redact.
 interface SentryRequestLike {
   url?: string
-  query_string?: string | string[] | Record<string, string> | [string, string][]
+  query_string?: unknown
   headers?: Record<string, unknown>
+  // Populated by the SDK's httpIntegration / requestDataIntegration and
+  // NOT gated by sendDefaultPii — these are the real leak vectors:
+  //   cookies — the parsed Cookie header (Supabase session JWTs).
+  //   data    — the request body (Twilio webhook = customer phone +
+  //             message text; broadcast/send = phones + message text).
+  cookies?: unknown
+  data?: unknown
 }
 interface SentryEventLike {
   request?: SentryRequestLike
 }
 
 const REDACTED = '[Filtered]'
-const SENSITIVE_QUERY_PARAM = /([?&](?:token|secret|key|signature|sig)=)[^&]*/gi
+const SENSITIVE_QUERY_PARAM =
+  /([?&](?:access[_-]?token|token|secret|api[_-]?key|apikey|key|signature|sig|auth|pin|password|pwd)=)[^&]*/gi
 const SENSITIVE_HEADERS = new Set([
   'authorization',
   'cookie',
@@ -46,17 +54,29 @@ function redactUrl(url: string): string {
 }
 
 /**
- * Strip secrets from an event's request context before it leaves the
- * process. Applied to both errors and performance transactions.
+ * Strip secrets and customer PII from an event's request context before
+ * it leaves the process. Applied to both errors and performance
+ * transactions. `sendDefaultPii: false` does NOT cover request cookies
+ * or bodies, so we drop those outright, and redact secret-bearing query
+ * params / headers from what remains.
  */
 export function scrubSentryEvent<T extends SentryEventLike>(event: T): T {
   const req = event.request
   if (!req) return event
 
+  // Request bodies and cookies carry customer PII / session tokens and
+  // are never safe to ship — drop them entirely.
+  if ('data' in req) delete req.data
+  if ('cookies' in req) delete req.cookies
+
   if (typeof req.url === 'string') req.url = redactUrl(req.url)
 
   if (typeof req.query_string === 'string') {
     req.query_string = redactUrl(`?${req.query_string}`).slice(1)
+  } else if (req.query_string != null) {
+    // Non-string shapes can't be scrubbed safely; the full URL above
+    // already carries the (redacted) query, so drop the duplicate.
+    delete req.query_string
   }
 
   if (req.headers && typeof req.headers === 'object') {
