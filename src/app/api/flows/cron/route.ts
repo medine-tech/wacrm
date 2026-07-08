@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
+import { authorizeCron } from '@/lib/cron/auth'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { resolveFallbackPolicy } from '@/lib/flows/fallback'
 
@@ -16,13 +16,11 @@ import { resolveFallbackPolicy } from '@/lib/flows/fallback'
  * index on `flow_runs WHERE status='active'`) forever — blocking any
  * new triggers for them. The cron is therefore not optional.
  *
- * Auth: accepts either the `x-cron-secret` header matching
- * `AUTOMATION_CRON_SECRET` (external pingers that can set custom
- * headers) or `Authorization: Bearer <CRON_SECRET>` — the only
- * header Vercel Cron can send. The two endpoints
- * (`/api/automations/cron` and this one) are independent operations;
- * we keep them on separate URLs so one failing doesn't block the
- * other.
+ * Auth: the shared cron credential (see src/lib/cron/auth.ts) — either
+ * the `x-cron-secret` header matching `AUTOMATION_CRON_SECRET` or
+ * `Authorization: Bearer <CRON_SECRET>` (the only header Vercel Cron
+ * can send). The cron endpoints are independent operations kept on
+ * separate URLs so one failing doesn't block the others.
  *
  * Hosting: hit on a schedule (Vercel Cron / GitHub Actions / external
  * pinger). A 5-minute interval is more than enough for a 24h timeout
@@ -30,41 +28,9 @@ import { resolveFallbackPolicy } from '@/lib/flows/fallback'
  * tenants.
  */
 
-// Constant-time compare so an attacker who can hit the endpoint
-// can't recover the secret byte-by-byte from response-time deltas.
-// Length pre-check is required by timingSafeEqual (throws otherwise)
-// and leaks only the length itself, which isn't sensitive.
-function secretsMatch(supplied: string, expected: string): boolean {
-  const suppliedBuf = Buffer.from(supplied)
-  const expectedBuf = Buffer.from(expected)
-  return (
-    suppliedBuf.length === expectedBuf.length &&
-    timingSafeEqual(suppliedBuf, expectedBuf)
-  )
-}
-
 export async function GET(request: Request) {
-  const headerSecret = process.env.AUTOMATION_CRON_SECRET || null
-  const bearerSecret = process.env.CRON_SECRET || null
-  if (!headerSecret && !bearerSecret) {
-    return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
-  }
-
-  const suppliedHeader = request.headers.get('x-cron-secret')
-  const authorization = request.headers.get('authorization')
-  const suppliedBearer = authorization?.startsWith('Bearer ')
-    ? authorization.slice('Bearer '.length)
-    : null
-  const authorized =
-    (headerSecret != null &&
-      suppliedHeader != null &&
-      secretsMatch(suppliedHeader, headerSecret)) ||
-    (bearerSecret != null &&
-      suppliedBearer != null &&
-      secretsMatch(suppliedBearer, bearerSecret))
-  if (!authorized) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const denied = authorizeCron(request)
+  if (denied) return denied
 
   const admin = supabaseAdmin()
   const now = new Date()

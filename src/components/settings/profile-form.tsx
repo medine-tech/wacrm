@@ -9,6 +9,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Avatar,
   AvatarFallback,
@@ -42,13 +43,39 @@ export function ProfileForm() {
   const [removeAvatar, setRemoveAvatar] = useState(false);
   const [saving, setSaving] = useState(false);
   const [emailChangePending, setEmailChangePending] = useState(false);
+  const [notifyEmail, setNotifyEmail] = useState(true);
+  const [savingNotify, setSavingNotify] = useState(false);
 
   // Seed form state once the profile loads.
   useEffect(() => {
     if (!profile) return;
     setFullName(profile.full_name ?? '');
     setEmail(profile.email ?? '');
+    setNotifyEmail(profile.notify_email_enabled);
   }, [profile]);
+
+  // Email-notification toggle saves on its own (independent of the
+  // name/email/avatar form) so a single flip is one round-trip.
+  const onToggleNotifyEmail = async (next: boolean) => {
+    if (!user) return;
+    const previous = notifyEmail;
+    setNotifyEmail(next); // optimistic
+    setSavingNotify(true);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ notify_email_enabled: next })
+      .eq('user_id', user.id);
+    setSavingNotify(false);
+    if (error) {
+      setNotifyEmail(previous);
+      toast.error('Could not update notification setting');
+      return;
+    }
+    await refreshProfile();
+    toast.success(
+      next ? 'Email notifications on' : 'Email notifications off',
+    );
+  };
 
   // Cleanup object URLs to avoid leaks.
   useEffect(() => {
@@ -348,6 +375,39 @@ export function ProfileForm() {
           </Button>
         </div>
       </form>
+
+      <div className="mt-8">
+        <SettingsPanelHead
+          title="Notifications"
+          description="Stay in the loop when you step away from the app."
+        />
+        <Card>
+          <CardContent>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <Label
+                  htmlFor="notify-email"
+                  className="text-foreground"
+                >
+                  Email me about activity I miss
+                </Label>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  When a conversation is assigned to you or a customer
+                  replies while you&apos;re away, we&apos;ll email you a
+                  summary if you haven&apos;t seen it after a few minutes.
+                  You always get notifications in the app.
+                </p>
+              </div>
+              <Switch
+                id="notify-email"
+                checked={notifyEmail}
+                onCheckedChange={onToggleNotifyEmail}
+                disabled={savingNotify || !profile}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </section>
   );
 }

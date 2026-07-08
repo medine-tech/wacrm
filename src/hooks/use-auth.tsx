@@ -35,6 +35,9 @@ interface Profile {
   beta_features: string[];
   account_id: string | null;
   account_role: AccountRole | null;
+  /** Whether to email this user about notifications they miss while
+   *  away (migration 036). Defaults to true when the column is absent. */
+  notify_email_enabled: boolean;
 }
 
 interface AccountSummary {
@@ -138,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from("profiles")
         .select(
-          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
+          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role, notify_email_enabled",
         )
         .eq("user_id", userId)
         .maybeSingle();
@@ -212,6 +215,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           beta_features: data.beta_features ?? [],
           account_id: data.account_id ?? null,
           account_role: accountRole,
+          // Column added in migration 036; older schemas read null,
+          // which we treat as opted-in (the DB default).
+          notify_email_enabled: data.notify_email_enabled ?? true,
         });
         setAccount(accountRow);
       } else {
