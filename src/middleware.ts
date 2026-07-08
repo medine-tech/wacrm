@@ -97,8 +97,12 @@ export async function middleware(request: NextRequest) {
 // are excluded from the matcher: they authenticate with their own
 // signatures/shared secrets and must not pay a per-request
 // supabase.auth.getUser() round-trip on every provider POST.
+//
+// `monitoring` (the Sentry tunnel route, configured in next.config.ts)
+// is excluded too — it's a high-frequency event forwarder that needs
+// no session and shouldn't pay the auth round-trip.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/whatsapp/webhook|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|monitoring|api/whatsapp/webhook|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
+import { withSentryConfig } from "@sentry/nextjs";
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
@@ -99,4 +100,22 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withNextIntl(nextConfig);
+// Sentry wraps the fully-composed config (outermost). Source maps are
+// uploaded automatically after the Turbopack production build when
+// SENTRY_AUTH_TOKEN is present, and deleted from the client bundle
+// afterwards so they aren't served publicly. Without the token the
+// build still succeeds — errors are captured with minified frames.
+export default withSentryConfig(withNextIntl(nextConfig), {
+  org: "medinetech",
+  project: "wacrm",
+  // Quiet upload logs locally; verbose in CI where they aid debugging.
+  silent: !process.env.CI,
+  // Broaden the client source-map upload for readable stack traces.
+  widenClientFileUpload: true,
+  // Route browser events through this same-origin path instead of
+  // sentry.io directly: survives ad-blockers and keeps the strict CSP
+  // at `connect-src 'self'` (no external Sentry host needed).
+  tunnelRoute: "/monitoring",
+  // Don't leave source maps in the deployed client bundle.
+  sourcemaps: { deleteSourcemapsAfterUpload: true },
+});
