@@ -43,14 +43,15 @@ for Production (and Preview if you use it).
 
 ## 3. Crons
 
-`vercel.json` declares two cron jobs, both every 5 minutes:
+`vercel.json` declares three cron jobs, all every 5 minutes:
 
 | Path | What it does | Why it matters |
 |---|---|---|
 | `/api/automations/cron` | Drains due `automation_pending_executions` rows. | Automations with Wait steps never resume without it. |
 | `/api/flows/cron` | Marks stale active `flow_runs` as `timed_out`. | An abandoned run otherwise blocks new flow triggers for that contact forever. |
+| `/api/notifications/cron` | Emails a digest of unread notifications to agents who are away/offline (the "you were away" fallback). | Without it, an agent who steps away never learns about assignments or customer replies they missed. Needs `RESEND_API_KEY` + `EMAIL_FROM`; a no-op otherwise. Respects the per-user opt-out (Settings → Profile). |
 
-Both endpoints accept either credential, compared in constant time:
+All three endpoints accept either credential, compared in constant time (shared helper `src/lib/cron/auth.ts`):
 
 - `Authorization: Bearer <CRON_SECRET>` — what Vercel Cron sends.
 - `x-cron-secret: <AUTOMATION_CRON_SECRET>` — for external pingers.
