@@ -81,6 +81,7 @@ export const commonSentryOptions = {
   tracesSampleRate: Number(
     process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? '0.1',
   ),
+  debug: process.env.SENTRY_DEBUG === '1',
   beforeSend: scrubSentryEvent,
   beforeSendTransaction: scrubSentryEvent,
 }
