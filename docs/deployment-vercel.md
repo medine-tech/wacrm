@@ -36,6 +36,8 @@ for Production (and Preview if you use it).
 | `TWILIO_AUTH_TOKEN` | Optional | Enables X-Twilio-Signature validation on top of the token check. |
 | `CRON_SECRET` | Yes | `openssl rand -hex 32`. Vercel Cron sends it as `Authorization: Bearer <value>` to both cron endpoints. |
 | `AUTOMATION_CRON_SECRET` | Optional | Only for external pingers that send the `x-cron-secret` header instead. |
+| `RESEND_API_KEY` | Email invites | Resend API key. Together with `EMAIL_FROM`, enables emailing team invites; when either is unset invites stay link-only. |
+| `EMAIL_FROM` | Email invites | From header, e.g. `WACRM <no-reply@medine.tech>`. Domain must be verified in Resend. |
 | `NEXT_PUBLIC_APP_LOCALE` | Optional | Default `en`. |
 | `ALLOWED_INVITE_HOSTS` | Optional | See `.env.local.example`. |
 

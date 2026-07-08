@@ -18,6 +18,7 @@
 // ============================================================
 
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { requireRole, toErrorResponse } from "@/lib/auth/account";
 import {
@@ -32,6 +33,8 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { isEmailConfigured, sendEmail } from "@/lib/email/resend";
+import { buildInviteEmail } from "@/lib/email/invite-email";
 
 // Resolve the base URL we publish invite links under.
 //
@@ -134,6 +137,42 @@ function getBaseUrl(request: Request): string | null {
 }
 
 const MAX_LABEL_LEN = 80;
+const MAX_EMAIL_LEN = 254;
+
+// Durable per-account cap on outbound invite emails. The in-memory
+// checkRateLimit budget is per-lambda-instance and Vercel fan-out
+// defeats it (see src/lib/rate-limit.ts), so this DB-backed count is
+// the real backstop against a compromised admin session spamming
+// arbitrary recipients from the verified sending domain. Generous
+// enough for any real onboarding burst.
+const MAX_INVITE_EMAILS_PER_HOUR = 30;
+
+// Pragmatic email shape check — a full RFC 5322 validator buys nothing
+// here (Resend rejects genuinely undeliverable addresses). We only
+// guard against obviously malformed input and overlong values.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// True when the account has already created its hourly quota of
+// email-bearing invites (the just-inserted row is counted). Fails
+// open on a query error — the cap is abuse hardening, not correctness,
+// and must never block a legitimate invite.
+async function overHourlyEmailCap(
+  supabase: SupabaseClient,
+  accountId: string,
+): Promise<boolean> {
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count, error } = await supabase
+    .from("account_invitations")
+    .select("id", { count: "exact", head: true })
+    .eq("account_id", accountId)
+    .not("email", "is", null)
+    .gt("created_at", since);
+  if (error) {
+    console.error("[POST /api/account/invitations] cap check failed:", error);
+    return false;
+  }
+  return (count ?? 0) > MAX_INVITE_EMAILS_PER_HOUR;
+}
 
 export async function GET() {
   try {
@@ -142,7 +181,7 @@ export async function GET() {
     const { data, error } = await ctx.supabase
       .from("account_invitations")
       .select(
-        "id, role, label, created_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id",
+        "id, role, label, email, email_sent_at, created_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id",
       )
       .eq("account_id", ctx.accountId)
       .is("accepted_at", null)
@@ -178,7 +217,7 @@ export async function POST(request: Request) {
     if (!limit.success) return rateLimitResponse(limit);
 
     const body = (await request.json().catch(() => null)) as
-      | { role?: unknown; expiresInDays?: unknown; label?: unknown }
+      | { role?: unknown; expiresInDays?: unknown; label?: unknown; email?: unknown }
       | null;
 
     const role = body?.role;
@@ -213,6 +252,21 @@ export async function POST(request: Request) {
       label = trimmed === "" ? null : trimmed;
     }
 
+    // Optional recipient email. When present we both store it (for the
+    // pending list) and send the invite through Resend after the row is
+    // created. When absent the invite stays link-only.
+    let email: string | null = null;
+    if (typeof body?.email === "string" && body.email.trim() !== "") {
+      const trimmed = body.email.trim().toLowerCase();
+      if (trimmed.length > MAX_EMAIL_LEN || !EMAIL_RE.test(trimmed)) {
+        return NextResponse.json(
+          { error: "Enter a valid email address" },
+          { status: 400 },
+        );
+      }
+      email = trimmed;
+    }
+
     // Resolve the base URL BEFORE inserting the row — if we can't
     // publish a usable link there's no point creating an invitation
     // the admin can never share.
@@ -237,9 +291,10 @@ export async function POST(request: Request) {
         role,
         created_by_user_id: ctx.userId,
         label,
+        email,
         expires_at: expiresAt.toISOString(),
       })
-      .select("id, role, label, expires_at, created_at")
+      .select("id, role, label, email, email_sent_at, expires_at, created_at")
       .single();
 
     if (error || !data) {
@@ -250,13 +305,66 @@ export async function POST(request: Request) {
       );
     }
 
+    const url = inviteUrl(token, baseUrl);
+
+    // Send the invite email if the admin supplied an address. A delivery
+    // failure must NOT fail the request — the row and link are already
+    // valid, so we report emailSent so the UI can fall back to the
+    // copy-link flow rather than leaving the admin thinking nothing
+    // happened.
+    let emailSent = false;
+    let emailError: string | null = null;
+    if (email) {
+      if (!isEmailConfigured()) {
+        emailError =
+          "Email delivery isn't configured on this deployment — copy the link below to share it.";
+      } else if (await overHourlyEmailCap(ctx.supabase, ctx.accountId)) {
+        emailError =
+          "Hourly invite-email limit reached — copy the link below to share it, or try again later.";
+      } else {
+        try {
+          const message = buildInviteEmail({
+            accountName: ctx.account.name,
+            role,
+            inviteUrl: url,
+            expiresInDays: expiryDays,
+          });
+          await sendEmail({ to: email, ...message });
+          emailSent = true;
+          // Persist delivery so the pending-list "Emailed" badge
+          // reflects a real send, not just the stored intent. A
+          // failure here only downgrades the badge, never the invite.
+          const { error: stampErr } = await ctx.supabase
+            .from("account_invitations")
+            .update({ email_sent_at: new Date().toISOString() })
+            .eq("id", data.id);
+          if (stampErr) {
+            console.error(
+              "[POST /api/account/invitations] email_sent_at stamp failed:",
+              stampErr,
+            );
+          }
+        } catch (err) {
+          emailError =
+            err instanceof Error ? err.message : "Failed to send the invite email";
+          console.error(
+            "[POST /api/account/invitations] email send failed:",
+            emailError,
+          );
+        }
+      }
+    }
+
     return NextResponse.json(
       {
         invitation: data,
         // Plaintext payload — visible to the admin exactly once.
         token,
-        url: inviteUrl(token, baseUrl),
+        url,
         expiresInDays: expiryDays,
+        email,
+        emailSent,
+        emailError,
       },
       { status: 201 },
     );

@@ -27,6 +27,7 @@ import {
   AlertTriangle,
   Loader2,
   Mail,
+  MailCheck,
   MailX,
   Plus,
   Trash2,
@@ -88,6 +89,8 @@ interface Invitation {
   id: string;
   role: 'admin' | 'agent' | 'viewer';
   label: string | null;
+  email: string | null;
+  email_sent_at: string | null;
   created_at: string;
   expires_at: string;
 }
@@ -523,8 +526,8 @@ export function MembersTab() {
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">
-                            {inv.label || 'Untitled invite'}
+                          <span className="truncate text-sm font-medium text-foreground">
+                            {inv.email || inv.label || 'Untitled invite'}
                           </span>
                           <span
                             className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${inviteRoleMeta.className}`}
@@ -532,8 +535,20 @@ export function MembersTab() {
                             <InviteRoleIcon className="size-3" />
                             {inviteRoleMeta.label}
                           </span>
+                          {inv.email_sent_at ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                              <MailCheck className="size-3" />
+                              Emailed
+                            </span>
+                          ) : inv.email ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                              <Mail className="size-3" />
+                              Not sent
+                            </span>
+                          ) : null}
                         </div>
                         <p className="mt-0.5 text-xs text-muted-foreground">
+                          {inv.email && inv.label ? `${inv.label} · ` : ''}
                           Created {fmtDate(inv.created_at)} · {fmtExpiresIn(inv.expires_at)}
                         </p>
                       </div>

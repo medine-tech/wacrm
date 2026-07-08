@@ -16,7 +16,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, Loader2, MessageCircle, Sparkles } from 'lucide-react';
+import { Copy, Loader2, Mail, MailCheck, MessageCircle, Sparkles } from 'lucide-react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -74,7 +74,17 @@ interface CreatedInvite {
   /** Snapshotted at creation time so a later account rename can't
    *  retroactively change the wa.me message text on the result step. */
   accountName: string;
+  /** The address the invite was emailed to, if any. */
+  email: string | null;
+  /** Whether the invite email was actually delivered via Resend. */
+  emailSent: boolean;
+  /** Set when an email was requested but couldn't be sent. */
+  emailError: string | null;
 }
+
+// Mirror the server's email shape check so we bounce obvious typos
+// before the round-trip.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function InviteMemberDialog({
   open,
@@ -85,6 +95,7 @@ export function InviteMemberDialog({
   const [role, setRole] = useState<InviteRole>('agent');
   const [expiry, setExpiry] = useState<string>('7');
   const [label, setLabel] = useState('');
+  const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedInvite | null>(null);
 
@@ -92,6 +103,7 @@ export function InviteMemberDialog({
     setRole('agent');
     setExpiry('7');
     setLabel('');
+    setEmail('');
     setResult(null);
     setSubmitting(false);
   }
@@ -108,6 +120,11 @@ export function InviteMemberDialog({
       toast.error(`Label must be ${MAX_LABEL_LEN} characters or fewer`);
       return;
     }
+    const trimmedEmail = email.trim();
+    if (trimmedEmail && !EMAIL_RE.test(trimmedEmail)) {
+      toast.error('Enter a valid email address');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch('/api/account/invitations', {
@@ -117,6 +134,7 @@ export function InviteMemberDialog({
           role,
           expiresInDays: Number(expiry),
           label: trimmedLabel || undefined,
+          email: trimmedEmail || undefined,
         }),
       });
 
@@ -129,12 +147,24 @@ export function InviteMemberDialog({
       const data = (await res.json()) as {
         url: string;
         expiresInDays: number;
+        email: string | null;
+        emailSent: boolean;
+        emailError: string | null;
       };
+
+      if (data.emailSent) {
+        toast.success(`Invite emailed to ${data.email}`);
+      } else if (data.emailError) {
+        toast.warning(data.emailError);
+      }
 
       setResult({
         url: data.url,
         role,
         expiresInDays: data.expiresInDays,
+        email: data.email,
+        emailSent: data.emailSent,
+        emailError: data.emailError,
         // Snapshot the account name into the result so the wa.me
         // share message has team context. Falls back to a generic
         // string if `account` hasn't loaded yet (shouldn't happen
@@ -206,6 +236,24 @@ export function InviteMemberDialog({
             </DialogHeader>
 
             <div className="space-y-3 py-2">
+              {result.emailSent ? (
+                <div className="flex items-start gap-2 rounded-md border border-emerald-500/50 bg-emerald-500/15 px-3 py-2 text-xs text-emerald-200">
+                  <MailCheck className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+                  <span>
+                    We emailed the invitation to{' '}
+                    <span className="font-medium text-emerald-100">
+                      {result.email}
+                    </span>
+                    . You can also share the link below directly.
+                  </span>
+                </div>
+              ) : result.emailError ? (
+                <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-xs text-amber-200">
+                  <Mail className="mt-0.5 size-4 shrink-0 text-amber-300" />
+                  <span>{result.emailError} Share the link below instead.</span>
+                </div>
+              ) : null}
+
               <Label className="text-muted-foreground">Invite link</Label>
               <div className="flex gap-2">
                 <Input
@@ -272,12 +320,34 @@ export function InviteMemberDialog({
             <DialogHeader>
               <DialogTitle className="text-popover-foreground">Invite a teammate</DialogTitle>
               <DialogDescription className="text-muted-foreground">
-                Generate a one-time invite link. Share it via WhatsApp,
-                Slack, or any channel you like — no email service required.
+                Enter an email to send the invite directly, or leave it
+                blank to generate a link you can share via WhatsApp, Slack,
+                or any channel you like.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">
+                  Email{' '}
+                  <span className="text-xs text-muted-foreground">(optional)</span>
+                </Label>
+                <Input
+                  type="email"
+                  inputMode="email"
+                  autoComplete="off"
+                  placeholder="teammate@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  maxLength={254}
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                />
+                <p className="text-xs text-muted-foreground">
+                  We&apos;ll email the invite link here. Leave blank to just
+                  generate a link.
+                </p>
+              </div>
+
               <div className="space-y-2">
                 <Label className="text-muted-foreground">Role</Label>
                 <Select
@@ -352,7 +422,12 @@ export function InviteMemberDialog({
                 {submitting ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
-                    Creating...
+                    {email.trim() ? 'Sending...' : 'Creating...'}
+                  </>
+                ) : email.trim() ? (
+                  <>
+                    <Mail className="size-4" />
+                    Send invite
                   </>
                 ) : (
                   'Generate link'
