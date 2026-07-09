@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import * as Sentry from '@sentry/nextjs'
 import { authorizePushDispatch } from '@/lib/notifications/dispatch-auth'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import {
@@ -15,20 +16,26 @@ export const maxDuration = 60
 /**
  * Web Push dispatch — the real-time channel.
  *
- * Invoked server-to-server by the Postgres `pg_net` trigger the moment a
- * notification row is inserted (Bearer-authenticated). Loads the
- * notification and the recipient's push subscriptions with the
- * service-role client, fans the payload out via VAPID, and prunes any
- * endpoint the push service reports as gone (404/410).
+ * Invoked server-to-server by the Postgres `pg_net` triggers (migration
+ * 040) whenever a notification row is inserted OR refreshed by another
+ * inbound message (Bearer-authenticated). Loads the notification and the
+ * recipient's push subscriptions with the service-role client, fans the
+ * payload out via VAPID, and prunes any endpoint the push service
+ * reports as gone (404/410).
  *
  * Independent of, and composed with, the email-timeout fallback: if the
  * recipient is away and still hasn't read it, `/api/notifications/cron`
  * emails a digest later. This endpoint never touches `emailed_at`.
+ *
+ * Non-2xx on failure is deliberate: the status is the only signal
+ * `net._http_response` records, so a 200 would make a dead push channel
+ * indistinguishable from a healthy one.
  */
 
 interface DispatchNotification {
   id: string
   user_id: string
+  account_id: string
   title: string
   body: string | null
   conversation_id: string | null
@@ -82,23 +89,55 @@ export async function POST(request: Request) {
   const admin = supabaseAdmin()
   const { data: notificationRow, error: loadErr } = await admin
     .from('notifications')
-    .select('id, user_id, title, body, conversation_id')
+    .select('id, user_id, account_id, title, body, conversation_id')
     .eq('id', notificationId)
     .maybeSingle()
 
   if (loadErr) {
-    console.error('[push-dispatch] notification lookup failed:', loadErr.message)
+    Sentry.captureException(loadErr, { tags: { route: 'push-dispatch' } })
     return NextResponse.json({ error: loadErr.message }, { status: 500 })
   }
   if (!notificationRow) {
-    return NextResponse.json({ skipped: 'not_found' })
+    return NextResponse.json({ error: 'notification not found' }, { status: 404 })
   }
   const notification = notificationRow as DispatchNotification
 
-  // The row still drives in-app delivery and the email fallback; only the
-  // push channel is unavailable when VAPID isn't configured.
+  // The trigger only POSTs here once the operator has provisioned the
+  // dispatch vault secrets, so reaching this branch means push is meant
+  // to be live and its VAPID credentials are missing. Fail loudly: the
+  // status lands in `net._http_response`, where a 200 would have read as
+  // a healthy no-op. The notification row itself still drives in-app
+  // delivery and the email fallback.
   if (!isPushConfigured()) {
-    return NextResponse.json({ skipped: 'push_not_configured' })
+    Sentry.captureMessage(
+      '[push-dispatch] VAPID credentials missing — push channel is down',
+      'error',
+    )
+    return NextResponse.json(
+      { error: 'push not configured' },
+      { status: 503 },
+    )
+  }
+
+  // Removing a member only moves their `profiles.account_id` to a fresh
+  // personal account — it leaves their unread notifications and push
+  // subscriptions behind. A later message on the same conversation
+  // refreshes those stale rows and would push the customer's message
+  // preview to someone who has left the account. The email fallback
+  // already drains on exactly this predicate (see selectPendingEmails).
+  const { data: membership, error: membershipErr } = await admin
+    .from('profiles')
+    .select('user_id')
+    .eq('user_id', notification.user_id)
+    .eq('account_id', notification.account_id)
+    .maybeSingle()
+
+  if (membershipErr) {
+    Sentry.captureException(membershipErr, { tags: { route: 'push-dispatch' } })
+    return NextResponse.json({ error: membershipErr.message }, { status: 500 })
+  }
+  if (!membership) {
+    return NextResponse.json({ skipped: 'recipient_not_a_member' })
   }
 
   const { data: subscriptions, error: subsErr } = await admin
@@ -107,7 +146,7 @@ export async function POST(request: Request) {
     .eq('user_id', notification.user_id)
 
   if (subsErr) {
-    console.error('[push-dispatch] subscription lookup failed:', subsErr.message)
+    Sentry.captureException(subsErr, { tags: { route: 'push-dispatch' } })
     return NextResponse.json({ error: subsErr.message }, { status: 500 })
   }
 
@@ -140,11 +179,10 @@ export async function POST(request: Request) {
         if (statusCode === 404 || statusCode === 410) {
           deadIds.push(sub.id)
         } else {
-          console.error(
-            '[push-dispatch] send failed for subscription',
-            sub.id,
-            err instanceof Error ? err.message : err,
-          )
+          Sentry.captureException(err, {
+            tags: { route: 'push-dispatch' },
+            extra: { subscriptionId: sub.id, statusCode },
+          })
         }
       }
     }),
@@ -156,7 +194,7 @@ export async function POST(request: Request) {
       .delete()
       .in('id', deadIds)
     if (pruneErr) {
-      console.error('[push-dispatch] prune failed:', pruneErr.message)
+      Sentry.captureException(pruneErr, { tags: { route: 'push-dispatch' } })
     }
   }
 
@@ -167,7 +205,7 @@ export async function POST(request: Request) {
       .update({ last_used_at: new Date().toISOString() })
       .in('id', deliveredIds)
     if (stampErr) {
-      console.error('[push-dispatch] last_used_at stamp failed:', stampErr.message)
+      Sentry.captureException(stampErr, { tags: { route: 'push-dispatch' } })
     }
   }
 

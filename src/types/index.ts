@@ -165,7 +165,10 @@ export interface Conversation {
 // Notifications (migration 027)
 // ============================================================
 
-export type NotificationType = 'conversation_assigned' | 'new_message';
+export type NotificationType =
+  | 'conversation_assigned'
+  | 'new_message'
+  | 'unassigned_message';
 
 export interface Notification {
   id: string;
@@ -181,6 +184,12 @@ export interface Notification {
   body?: string;
   read_at?: string;
   created_at: string;
+  /**
+   * Most recent inbound message folded into this notification. Repeat
+   * messages coalesce into one row, so `created_at` marks the first
+   * missed message (the email timeout) and this marks the latest.
+   */
+  last_message_at?: string;
 }
 
 // ============================================================

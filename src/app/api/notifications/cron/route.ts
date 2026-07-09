@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import * as Sentry from '@sentry/nextjs'
 import { authorizeCron } from '@/lib/cron/auth'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { isEmailConfigured, sendEmail } from '@/lib/email/resend'
@@ -55,20 +56,26 @@ export async function GET(request: Request) {
     .limit(MAX_NOTIFICATIONS_PER_SWEEP)
 
   if (pendingErr) {
-    console.error('[notifications-cron] pending scan failed:', pendingErr.message)
+    Sentry.captureException(pendingErr, { tags: { route: 'notifications-cron' } })
     return NextResponse.json({ error: pendingErr.message }, { status: 500 })
   }
   const notifications = (pending ?? []) as PendingNotification[]
   if (notifications.length === 0) return NextResponse.json({ emailed: 0 })
 
   // A broken CTA link helps no one and can't be un-sent (emailed_at is
-  // one-shot), so require the public URL before sending anything.
+  // one-shot), so require the public URL before sending anything. Email
+  // is configured, so an absent site URL is a misconfiguration, not an
+  // intentional opt-out: fail the cron run rather than report success.
   const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || '').replace(/\/+$/, '')
   if (!siteUrl) {
-    console.error(
-      '[notifications-cron] NEXT_PUBLIC_SITE_URL is unset — skipping to avoid dead links',
+    Sentry.captureMessage(
+      '[notifications-cron] NEXT_PUBLIC_SITE_URL is unset — digest suppressed to avoid dead links',
+      'error',
     )
-    return NextResponse.json({ skipped: 'site_url_not_configured' })
+    return NextResponse.json(
+      { error: 'site url not configured' },
+      { status: 500 },
+    )
   }
   const notificationsUrl = `${siteUrl}/notifications`
 
@@ -93,7 +100,7 @@ export async function GET(request: Request) {
   ])
   if (profilesErr || presenceErr) {
     const err = profilesErr ?? presenceErr
-    console.error('[notifications-cron] recipient lookup failed:', err!.message)
+    Sentry.captureException(err, { tags: { route: 'notifications-cron' } })
     return NextResponse.json({ error: err!.message }, { status: 500 })
   }
 
@@ -147,7 +154,10 @@ export async function GET(request: Request) {
       await admin.auth.admin.getUserById(userId)
     const to = userData?.user?.email
     if (userErr || !to) {
-      console.warn('[notifications-cron] no email for user', userId)
+      Sentry.captureMessage(
+        `[notifications-cron] no email address for user ${userId}`,
+        'warning',
+      )
       // Can never be emailed — drain so it doesn't starve the sweep.
       for (const n of userNotifications) toStamp.push(n.id)
       continue
@@ -164,11 +174,10 @@ export async function GET(request: Request) {
     try {
       await sendEmail({ to, ...message })
     } catch (err) {
-      console.error(
-        '[notifications-cron] send failed for user',
-        userId,
-        err instanceof Error ? err.message : err,
-      )
+      Sentry.captureException(err, {
+        tags: { route: 'notifications-cron' },
+        extra: { userId },
+      })
       continue // leave emailed_at null → retried next sweep
     }
 
@@ -186,10 +195,7 @@ export async function GET(request: Request) {
       .update({ emailed_at: new Date().toISOString() })
       .in('id', toStamp)
     if (stampErr) {
-      console.error(
-        '[notifications-cron] emailed_at stamp failed:',
-        stampErr.message,
-      )
+      Sentry.captureException(stampErr, { tags: { route: 'notifications-cron' } })
     }
   }
 

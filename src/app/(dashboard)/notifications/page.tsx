@@ -8,6 +8,7 @@ import type { Notification } from "@/types";
 import {
   Bell,
   CheckCheck,
+  Inbox,
   Loader2,
   MessageSquare,
   UserPlus,
@@ -21,7 +22,19 @@ import { toast } from "sonner";
 const TYPE_ICON: Record<Notification["type"], typeof Bell> = {
   conversation_assigned: UserPlus,
   new_message: MessageSquare,
+  unassigned_message: Inbox,
 };
+
+// Mirrors the DB's generated `activity_at`. Recomputed here rather than
+// read from the row because Postgres omits generated columns from the
+// logical-replication payload realtime updates arrive on.
+function activityAt(n: Notification): number {
+  return new Date(n.last_message_at ?? n.created_at).getTime();
+}
+
+function byRecentActivity(a: Notification, b: Notification): number {
+  return activityAt(b) - activityAt(a);
+}
 
 export default function NotificationsPage() {
   const router = useRouter();
@@ -35,17 +48,20 @@ export default function NotificationsPage() {
   const load = useCallback(async () => {
     if (!accountId) return;
     const supabase = createClient();
+    // activity_at (migration 041) is COALESCE(last_message_at, created_at):
+    // ordering the LIMIT window by it keeps a long-running conversation that
+    // keeps coalescing inside the most-recent-100, which created_at would drop.
     const { data, error: fetchErr } = await supabase
       .from("notifications")
       .select("*")
       .eq("account_id", accountId)
-      .order("created_at", { ascending: false })
+      .order("activity_at", { ascending: false })
       .limit(100);
     if (fetchErr) {
       setError(fetchErr.message);
       return;
     }
-    setNotifications((data ?? []) as Notification[]);
+    setNotifications(((data ?? []) as Notification[]).sort(byRecentActivity));
   }, [accountId]);
 
   useEffect(() => {
@@ -68,13 +84,15 @@ export default function NotificationsPage() {
             setNotifications((prev) => {
               if (!prev) return [row];
               if (prev.some((n) => n.id === row.id)) return prev;
-              return [row, ...prev];
+              return [row, ...prev].sort(byRecentActivity);
             });
           } else if (payload.eventType === "UPDATE") {
             const row = payload.new as Notification;
-            setNotifications((prev) =>
-              prev?.map((n) => (n.id === row.id ? { ...n, ...row } : n)) ??
-              prev,
+            setNotifications(
+              (prev) =>
+                prev
+                  ?.map((n) => (n.id === row.id ? { ...n, ...row } : n))
+                  .sort(byRecentActivity) ?? prev,
             );
           } else if (payload.eventType === "DELETE") {
             const oldRow = payload.old as Partial<Notification>;
@@ -258,9 +276,10 @@ export default function NotificationsPage() {
                       </p>
                     )}
                     <p className="mt-1 text-[11px] text-muted-foreground/70">
-                      {formatDistanceToNow(new Date(n.created_at), {
-                        addSuffix: true,
-                      })}
+                      {formatDistanceToNow(
+                        new Date(n.last_message_at ?? n.created_at),
+                        { addSuffix: true },
+                      )}
                     </p>
                   </div>
                 </button>
