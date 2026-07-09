@@ -1,0 +1,127 @@
+{
+  "skill_name": "agent-md-creator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create an AGENTS.md for the effective-leadership module. The lesson files are in evals/fixtures/create-module/ — read them and build the index. This is a content-repo module (course: Manager Pro Team, instructor: Laura Pérez). Also add a routing table entry to a hypothetical root AGENTS.md (just show what the row would look like in a separate file called routing-row.md, don't modify any real root file).",
+      "expected_output": "An AGENTS.md file created at evals/fixtures/create-module/AGENTS.md following the content-module template. Each of the 3 lesson files has a document entry with a verb-first summary and kebab-case topics. A routing table row is shown for the root AGENTS.md. No ls instructions present.",
+      "files": [
+        "evals/fixtures/create-module/delegation-and-empowerment.md",
+        "evals/fixtures/create-module/one-on-one-meetings.md",
+        "evals/fixtures/create-module/conflict-resolution-strategies.md"
+      ],
+      "expectations": [
+        "An AGENTS.md file is created at evals/fixtures/create-module/AGENTS.md",
+        "The AGENTS.md contains a module title, course name, instructor, and module focus line",
+        "All 3 lesson files have document entries (delegation-and-empowerment.md, one-on-one-meetings.md, conflict-resolution-strategies.md)",
+        "Each document entry has a verb-first summary sentence (starts with Covers, Explains, Examines, or similar verb)",
+        "Each document entry has a Topics line with kebab-case keywords",
+        "The AGENTS.md does not contain instructions to run ls, find, tree, or list the directory",
+        "A routing table row is provided showing the module name, AGENTS.md path, description, and keywords",
+        "The agent read the actual lesson files to generate specific summaries (not generic placeholders)",
+        "The AGENTS.md follows the content-module template structure: # Title, Course/Instructor/Module focus metadata, ## Documents section",
+        "At least one document entry includes a topic keyword not found in that file's frontmatter tags (demonstrating routing-term enrichment beyond raw tag copying)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "The API Design Patterns module at evals/fixtures/update-module/ has 2 new lesson files that aren't in the AGENTS.md yet: error-handling-patterns.md and api-versioning.md. Add entries for them to the existing AGENTS.md without changing the existing entries for rest-resource-naming.md and pagination-strategies.md.",
+      "expected_output": "The existing AGENTS.md at evals/fixtures/update-module/AGENTS.md is updated with 2 new document entries. The existing entries for rest-resource-naming.md and pagination-strategies.md are preserved exactly. Edit tool is used instead of Write to make targeted changes.",
+      "files": [
+        "evals/fixtures/update-module/AGENTS.md",
+        "evals/fixtures/update-module/error-handling-patterns.md",
+        "evals/fixtures/update-module/api-versioning.md"
+      ],
+      "expectations": [
+        "The existing AGENTS.md at evals/fixtures/update-module/AGENTS.md is modified (not recreated)",
+        "The existing entry for rest-resource-naming.md is preserved unchanged",
+        "The existing entry for pagination-strategies.md is preserved unchanged",
+        "A new entry for error-handling-patterns.md is added with a verb-first summary and kebab-case topics",
+        "A new entry for api-versioning.md is added with a verb-first summary and kebab-case topics",
+        "The Edit tool is used instead of Write to update the file",
+        "The new entries match the existing format (### filename.md, summary, - Topics: keywords)",
+        "The agent read the actual new files to generate specific summaries",
+        "At least one new entry includes a topic keyword not found in that file's frontmatter tags (e.g., rfc-7807 for error-handling-patterns.md, or sunset-headers for api-versioning.md)"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The AGENTS.md at evals/fixtures/migrate-ls/AGENTS.md has two places where it tells the agent to 'run ls' to discover files. Migrate it to the filemap approach — replace those ls instructions with pre-built file indexes, reading the actual files/directories to build proper entries. Keep everything else (component guidelines, testing section) intact.",
+      "expected_output": "The AGENTS.md at evals/fixtures/migrate-ls/AGENTS.md is updated to replace both 'run ls' instructions with pre-built file index tables. The docs/ section gets a table with entries for component-patterns.md, state-management.md, and testing-guide.md. The stores/ section gets entries for auth-store.ts and cart-store.ts. All other content (component guidelines, testing section) is preserved.",
+      "files": [
+        "evals/fixtures/migrate-ls/AGENTS.md",
+        "evals/fixtures/migrate-ls/docs/component-patterns.md",
+        "evals/fixtures/migrate-ls/docs/state-management.md",
+        "evals/fixtures/migrate-ls/docs/testing-guide.md",
+        "evals/fixtures/migrate-ls/stores/auth-store.ts",
+        "evals/fixtures/migrate-ls/stores/cart-store.ts"
+      ],
+      "expectations": [
+        "The AGENTS.md at evals/fixtures/migrate-ls/AGENTS.md is modified",
+        "The 'run ls in that directory' instruction in the Documentation section is removed",
+        "The 'run ls stores/' instruction in the State Management section is removed",
+        "A file index is added for the docs/ directory listing component-patterns.md, state-management.md, and testing-guide.md",
+        "A file index is added for the stores/ directory listing auth-store.ts and cart-store.ts",
+        "The Component Guidelines section content is preserved unchanged",
+        "The Testing section content is preserved unchanged",
+        "The file does not contain any remaining instructions to run ls, find, or tree",
+        "The agent read the actual files in docs/ and stores/ to build specific descriptions",
+        "The file indexes use markdown table format (with | column | headers |) rather than plain bullet lists",
+        "At least one file index table includes a 'When to Read' or equivalent trigger-condition column"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Audit the AGENTS.md coverage for the project at evals/fixtures/audit-project/. Check all AGENTS.md files for issues: phantom references (files listed in AGENTS.md that don't exist on disk), missing entries (files on disk not listed in AGENTS.md), ls instructions, and missing routing entries in the root. Report all findings and fix them.",
+      "expected_output": "The audit identifies at least these issues: (1) module-a/AGENTS.md references phantom-file.md which doesn't exist, (2) module-a has unindexed-file.md with no AGENTS.md entry, (3) module-b/AGENTS.md has an 'ls' instruction instead of file entries, (4) module-c exists but has no routing entry in root AGENTS.md. All issues are fixed.",
+      "files": [
+        "evals/fixtures/audit-project/AGENTS.md",
+        "evals/fixtures/audit-project/module-a/AGENTS.md",
+        "evals/fixtures/audit-project/module-a/existing-file.md",
+        "evals/fixtures/audit-project/module-a/unindexed-file.md",
+        "evals/fixtures/audit-project/module-b/AGENTS.md",
+        "evals/fixtures/audit-project/module-b/data-processing.md",
+        "evals/fixtures/audit-project/module-b/stream-handling.md",
+        "evals/fixtures/audit-project/module-c/AGENTS.md",
+        "evals/fixtures/audit-project/module-c/config-management.md"
+      ],
+      "expectations": [
+        "The audit identifies that module-a/AGENTS.md references phantom-file.md which does not exist on disk",
+        "The audit identifies that module-a has unindexed-file.md with no entry in its AGENTS.md",
+        "The audit identifies that module-b/AGENTS.md contains an 'ls' instruction instead of proper file entries",
+        "The audit identifies that module-c has no routing entry in the root AGENTS.md",
+        "The phantom-file.md entry is removed from module-a/AGENTS.md",
+        "An entry for unindexed-file.md is added to module-a/AGENTS.md with a verb-first summary",
+        "The ls instruction in module-b/AGENTS.md is replaced with proper document entries for data-processing.md and stream-handling.md",
+        "A routing table row for Module C is added to the root AGENTS.md",
+        "After fixes, every file referenced in each AGENTS.md exists on disk",
+        "After fixes, no AGENTS.md contains instructions to run ls, find, or tree"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Create an AGENTS.md for the code repository at evals/fixtures/code-repo/. This is a TypeScript API project (Hono framework, Drizzle ORM, Vitest for tests). Read the source files, docs, and package.json to build a proper root-level AGENTS.md following the code-repo archetype.",
+      "expected_output": "An AGENTS.md file created at evals/fixtures/code-repo/AGENTS.md following the code-repo template. Includes project overview, commands from package.json, directory map, and reference index for docs/. No ls instructions.",
+      "files": [
+        "evals/fixtures/code-repo/package.json",
+        "evals/fixtures/code-repo/src/index.ts",
+        "evals/fixtures/code-repo/src/routes/tasks.ts",
+        "evals/fixtures/code-repo/src/middleware/auth.ts",
+        "evals/fixtures/code-repo/docs/api-reference.md",
+        "evals/fixtures/code-repo/docs/deployment.md",
+        "evals/fixtures/code-repo/tests/tasks.test.ts"
+      ],
+      "expectations": [
+        "An AGENTS.md file is created at evals/fixtures/code-repo/AGENTS.md",
+        "The AGENTS.md includes a project overview mentioning Hono, Drizzle, and TypeScript",
+        "The AGENTS.md includes a commands section with commands extracted from package.json scripts (dev, build, test, lint, migrate)",
+        "The AGENTS.md includes a directory map listing src/, docs/, and tests/ with purpose annotations",
+        "The AGENTS.md includes a reference index or document table for docs/ files (api-reference.md, deployment.md) with descriptions",
+        "The AGENTS.md does not contain instructions to run ls, find, tree, or list the directory",
+        "The AGENTS.md uses code-repo template structure (not content-repo template with routing tables)",
+        "The docs/ reference entries include a 'When to Read' or 'Purpose' column with specific trigger conditions",
+        "The agent read the actual source files to understand the project (not just package.json)"
+      ]
+    }
+  ]
+}
