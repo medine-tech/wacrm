@@ -1,0 +1,204 @@
+{
+  "skill_name": "do-task",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Implement a student enrollment feature for a university management system. Students can enroll in courses, but each course has a maximum capacity. If the course is full, enrollment should be rejected with a clear error. The system needs a POST /enrollments endpoint.\n\nThe project is at /tmp/uni-mgmt and uses Node.js with Express and TypeORM, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). It already has a course creation feature at:\n- src/courses/domain/Course.ts (entity)\n- src/courses/domain/CourseId.ts (value object)\n- src/courses/application/CourseCreator.ts (use case)\n- src/courses/infrastructure/TypeOrmCourseRepository.ts (adapter)\n- src/courses/infrastructure/CoursePostController.ts (route handler)\n- test/courses/application/CourseCreator.test.ts (unit test)\n- test/courses/domain/CourseMother.ts (object mother)\n\nUse Jest for testing.",
+      "expected_output": "Coordinator spawns Explore agent for codebase discovery, classifies as backend-only, spawns backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect), uses EnterPlanMode/ExitPlanMode for plan approval, spawns backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer), spawns reviewer (subagent_type: 'general-purpose', prompt activates /reviewer, runs git diff internally), delegates report to agent",
+      "files": [],
+      "expectations": [
+        "Spawns an Explore agent (subagent_type: 'Explore') in Phase 1 for codebase discovery — the orchestrator does NOT call codebase-retrieval or Glob directly",
+        "Classifies scope as backend-only — does not spawn frontend-architect or frontend-developer agents",
+        "Spawns a backend-architect agent (subagent_type: 'general-purpose', prompt activates /backend-architect) with a self-contained prompt that includes the task description, tech stack (Node.js/Express/TypeORM), and architecture (hexagonal). The prompt starts with 'Activate /backend-architect.' to invoke the skill",
+        "Calls EnterPlanMode after the backend-architect completes, writes a plan summary to the plan file covering scope, key decisions, files to create, test strategy, and agent order, then calls ExitPlanMode — does NOT spawn any developer agents before receiving user approval",
+        "Spawns a backend-developer agent (subagent_type: 'general-purpose', prompt activates /backend-developer) with a prompt that includes the complete architecture plan from the backend-architect and the project path. The prompt starts with 'Activate /backend-developer.' to invoke the skill",
+        "After the backend-architect completes, spawns a general-purpose agent (mode: 'bypassPermissions') to persist the plan to {project_path}/.agents/plans/student-enrollment-api-backend.md with YAML frontmatter (feature, scope, side, revision, created_at, updated_at)",
+        "After the backend-developer completes, spawns an Explore agent to validate implementation completeness against the architect plan — returns a checklist of DONE/PARTIAL/MISSING items",
+        "Spawns a reviewer agent (subagent_type: 'general-purpose', prompt activates /reviewer) after the backend-developer completes and validation passes, with a prompt that instructs the reviewer to run git diff internally. The prompt starts with 'Activate /reviewer.' to invoke the skill. The orchestrator does NOT run git diff or pass a diff to the reviewer",
+        "Delegates the final report to a spawned agent — the orchestrator does NOT compose the report directly. The report includes an 'Implementation Completeness' section"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Build a product catalog feature for an e-commerce application. The backend needs a GET /products endpoint with filtering by category and price range, plus a POST /products endpoint for admin product creation. The frontend needs a product listing page with filter controls and a product card grid.\n\nThe project is at /tmp/ecommerce-app. The backend uses Node.js with Express and TypeORM, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). The frontend uses Next.js 14 App Router (app/[route]/page.tsx) with Tailwind CSS.\n\nThe project already has:\n- Backend: src/orders/domain/Order.ts, src/orders/application/OrderCreator.ts, src/orders/infrastructure/OrderPostController.ts\n- Frontend: app/orders/page.tsx, app/orders/components/OrderCard.tsx\n- Tests: test/orders/application/OrderCreator.test.ts, app/orders/__tests__/page.test.tsx\n\nUse Jest for testing on both sides.",
+      "expected_output": "Coordinator spawns Explore agent, classifies as full-stack, spawns both architects (subagent_type: 'general-purpose', prompt activates /backend-architect and 'frontend-architect') in parallel, uses EnterPlanMode/ExitPlanMode for plan approval after both complete, spawns backend-dev (subagent_type: 'general-purpose', prompt activates /backend-developer) first then frontend-dev (subagent_type: 'general-purpose', prompt activates /frontend-developer) sequentially, reviewer (subagent_type: 'general-purpose', prompt activates /reviewer) runs git diff internally, delegates report to agent",
+      "files": [],
+      "expectations": [
+        "Spawns an Explore agent (subagent_type: 'Explore') in Phase 1 for codebase discovery — the orchestrator does NOT call codebase-retrieval or Glob directly",
+        "Classifies scope as full-stack — recognizes that both API endpoints (GET/POST /products) and a frontend page (product listing) are needed",
+        "Spawns backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect) AND frontend-architect (subagent_type: 'general-purpose', prompt activates /frontend-architect) in parallel (same turn, two Agent tool calls) with self-contained prompts that include the task description and respective tech stacks. Each prompt starts with 'Activate /[skill-name].' to invoke the respective skill",
+        "Calls EnterPlanMode after BOTH architects complete, writes a combined plan summary to the plan file covering scope, key decisions from both plans, files to create for both backend and frontend, test strategy, and agent order, then calls ExitPlanMode — does NOT spawn any developer agents before receiving user approval",
+        "After BOTH architects complete, spawns a general-purpose agent (mode: 'bypassPermissions') to persist plans to {project_path}/.agents/plans/ — writes both a-product-catalog-feature-backend.md and a-product-catalog-feature-frontend.md with YAML frontmatter",
+        "Spawns backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) FIRST, waits for completion, validates backend implementation via Explore agent, THEN spawns frontend-developer (subagent_type: 'general-purpose', prompt activates /frontend-developer) — sequential ordering because the frontend depends on the backend API contract",
+        "After the frontend-developer completes, spawns an Explore agent to validate frontend implementation completeness against the frontend architect plan",
+        "Spawns a single reviewer agent (subagent_type: 'general-purpose', prompt activates /reviewer) after BOTH developers complete and validation passes, with a prompt that instructs the reviewer to run git diff internally. The prompt starts with 'Activate /reviewer.' to invoke the skill. The orchestrator does NOT run git diff or pass a diff to the reviewer",
+        "Delegates the final report to a spawned agent covering the full-stack scope, including an 'Implementation Completeness' section"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Refactor the dashboard page in our analytics application. The current dashboard component is a single 500-line file that handles data fetching, state management, chart rendering, and filter controls all in one component. Break it into smaller, focused components following single responsibility principle.\n\nThe project is at /tmp/analytics-app. It uses Next.js 14 with Pages Router (pages/dashboard.tsx) and Tailwind CSS. Charts use Recharts. State management uses React Context.\n\nExisting structure:\n- pages/dashboard.tsx (the monolith to refactor)\n- components/Layout.tsx (app shell with sidebar)\n- context/DashboardContext.tsx (state provider)\n- hooks/useDashboardData.ts (data fetching hook)\n- __tests__/dashboard.test.tsx (existing tests)\n\nUse Jest with React Testing Library.",
+      "expected_output": "Coordinator spawns Explore agent, classifies as frontend-only, spawns frontend-architect (subagent_type: 'general-purpose', prompt activates /frontend-architect), uses EnterPlanMode/ExitPlanMode for plan approval, spawns frontend-developer (subagent_type: 'general-purpose', prompt activates /frontend-developer), reviewer (subagent_type: 'general-purpose', prompt activates /reviewer) runs git diff internally, architect plan includes characterization tests, delegates report to agent",
+      "files": [],
+      "expectations": [
+        "Spawns an Explore agent (subagent_type: 'Explore') in Phase 1 for codebase discovery — the orchestrator does NOT call codebase-retrieval or Glob directly",
+        "Classifies scope as frontend-only — does not spawn backend-architect or backend-developer agents",
+        "Spawns a frontend-architect agent (subagent_type: 'general-purpose', prompt activates /frontend-architect) with a self-contained prompt that includes the task description, tech stack (Next.js Pages Router, Recharts, Tailwind, React Context), and existing file structure. The prompt starts with 'Activate /frontend-architect.' to invoke the skill",
+        "Calls EnterPlanMode after the frontend-architect completes, writes a plan summary to the plan file covering scope, key decisions, files to create/modify, test strategy, and agent order, then calls ExitPlanMode — does NOT spawn any developer agents before receiving user approval",
+        "Spawns a frontend-developer agent (subagent_type: 'general-purpose', prompt activates /frontend-developer) with a prompt that includes the complete architecture plan from the frontend-architect and the project path. The prompt starts with 'Activate /frontend-developer.' to invoke the skill",
+        "After the frontend-architect completes, spawns a general-purpose agent (mode: 'bypassPermissions') to persist the plan to {project_path}/.agents/plans/dashboard-refactor-frontend.md with YAML frontmatter (feature, scope, side, revision, created_at, updated_at)",
+        "After the frontend-developer completes, spawns an Explore agent to validate implementation completeness against the architect plan — returns a checklist of DONE/PARTIAL/MISSING items",
+        "Spawns a reviewer agent (subagent_type: 'general-purpose', prompt activates /reviewer) after the frontend-developer completes and validation passes, with a prompt that instructs the reviewer to run git diff internally. The prompt starts with 'Activate /reviewer.' to invoke the skill. The orchestrator does NOT run git diff or pass a diff to the reviewer",
+        "Delegates the final report to a spawned agent. The report includes an 'Implementation Completeness' section"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Add a health check endpoint GET /health that returns { \"status\": \"ok\" } with a 200 status code. No database check needed, just a simple liveness probe.\n\nThe project is at /tmp/api-service and uses Node.js with Express, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). It already has:\n- src/users/domain/User.ts\n- src/users/infrastructure/UserGetController.ts\n- src/shared/infrastructure/Server.ts (Express app setup)\n- test/users/infrastructure/UserGetController.test.ts\n\nUse Jest for testing.",
+      "expected_output": "Coordinator spawns Explore agent, classifies as backend-only, spawns backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect), uses EnterPlanMode/ExitPlanMode for user approval BEFORE spawning any developer agent, even though the task is trivial. The approval gate is never skipped regardless of task complexity.",
+      "files": [],
+      "expectations": [
+        "Spawns an Explore agent (subagent_type: 'Explore') in Phase 1 for codebase discovery — the orchestrator does NOT call codebase-retrieval or Glob directly",
+        "Calls EnterPlanMode after the backend-architect completes — does NOT skip plan approval even though the task is trivial",
+        "Writes plan summary to the plan file and calls ExitPlanMode for user approval",
+        "Does NOT spawn any developer agent (backend-developer or frontend-developer) in the same turn where architect agents were spawned",
+        "Does NOT spawn any developer agent before the user approves the plan via ExitPlanMode",
+        "Only spawns backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) AFTER the user has approved the plan"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Build a product review feature. Users can submit reviews (1-5 stars + text) for products via POST /products/:id/reviews, and the frontend needs a review form component and a reviews list on the product detail page.\n\nThe project is at /tmp/ecommerce and uses Node.js with Express and TypeORM for the backend (hexagonal architecture), and Next.js 14 App Router with Tailwind CSS for the frontend. Existing features:\n- Backend: src/products/domain/Product.ts, src/products/application/ProductFinder.ts, src/products/infrastructure/ProductGetController.ts\n- Frontend: app/products/[id]/page.tsx, app/products/[id]/components/ProductDetail.tsx\n- Tests: test/products/application/ProductFinder.test.ts, app/products/[id]/__tests__/page.test.tsx\n\nUse Jest for testing on both sides.",
+      "expected_output": "Coordinator spawns Explore agent, classifies as full-stack, spawns BOTH architects (subagent_type: 'general-purpose', prompt activates /backend-architect and 'frontend-architect') in parallel, then uses EnterPlanMode/ExitPlanMode for plan approval which requires user response. Developer agents are only spawned after the user approves. Architects and developers never appear in the same turn.",
+      "files": [],
+      "expectations": [
+        "Spawns backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect) AND frontend-architect (subagent_type: 'general-purpose', prompt activates /frontend-architect) in parallel (same turn, two Agent tool calls)",
+        "Calls EnterPlanMode after BOTH architects complete — in a turn that does NOT contain any developer agent spawns",
+        "Does NOT spawn any developer agent after calling ExitPlanMode in the same turn — plan approval requires user response first",
+        "Does NOT spawn backend-developer or frontend-developer in the same turn as the architect agents",
+        "Spawns backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) first and frontend-developer (subagent_type: 'general-purpose', prompt activates /frontend-developer) second (sequential) only after the user approves the plan"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Add a simple logging middleware that logs request method, path, and response time for every HTTP request.\n\nThe project is at /tmp/api-service and uses Node.js with Express. Existing structure:\n- src/shared/infrastructure/Server.ts\n- src/shared/infrastructure/RequestLogger.ts (empty placeholder)\n- test/shared/infrastructure/RequestLogger.test.ts (empty placeholder)\n\nUse Jest for testing.",
+      "expected_output": "Coordinator spawns Explore agent, classifies as backend-only, spawns backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect), uses EnterPlanMode/ExitPlanMode to present the plan and get user approval. Developer agents are only spawned after the user approves.",
+      "files": [],
+      "expectations": [
+        "Spawns an Explore agent (subagent_type: 'Explore') in Phase 1 for codebase discovery — the orchestrator does NOT call codebase-retrieval or Glob directly",
+        "Spawns a backend-architect agent (subagent_type: 'general-purpose', prompt activates /backend-architect) with a self-contained prompt for the logging middleware task",
+        "Calls EnterPlanMode to present the architecture plan for user approval — writes plan summary to the plan file, then calls ExitPlanMode",
+        "Does NOT spawn any developer agent before receiving the user's approval via plan mode",
+        "After the user approves, spawns backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) with the approved plan",
+        "Plan summary written to the plan file includes scope, key decisions, files to create/modify, test strategy, and agent order"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Implement a tag management feature for a content management system. Articles can have multiple tags, and tags can be created and listed. The system needs POST /tags and GET /tags endpoints, plus a PUT /articles/:id/tags endpoint to assign tags to an article. This is CSU-312.\n\nThe project is at /tmp/cms-api and uses Node.js with Express and TypeORM, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). It already has:\n- src/articles/domain/Article.ts (entity)\n- src/articles/domain/ArticleId.ts (value object)\n- src/articles/application/ArticleCreator.ts (use case)\n- src/articles/infrastructure/TypeOrmArticleRepository.ts (adapter)\n- src/articles/infrastructure/ArticlePostController.ts (route handler)\n- test/articles/application/ArticleCreator.test.ts (unit test)\n\nUse Jest for testing.",
+      "expected_output": "Coordinator spawns Explore agent, detects Linear issue code CSU-312 (used only for the autonomous-mode trigger check), runs the standard 6-phase pipeline (backend-architect → EnterPlanMode/ExitPlanMode → backend-developer → reviewer → report). The orchestrator never spawns a QA agent, never invokes the linear CLI to create a QA sub-issue, and the final report has no QA Sub-Issue section.",
+      "files": [],
+      "expectations": [
+        "Spawns an Explore agent (subagent_type: 'Explore') in Phase 1 for codebase discovery — the orchestrator does NOT call codebase-retrieval or Glob directly",
+        "Detects 'CSU-312' as a Linear issue code in the task description during Phase 1 analysis — the code is recorded only to feed the autonomous-mode trigger check (fetching the upstream Linear issue for an ADR/PRD reference), not to drive any sub-issue creation",
+        "Runs the 6-phase pipeline: spawns backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect), uses EnterPlanMode/ExitPlanMode for plan approval, spawns backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer), spawns reviewer (subagent_type: 'general-purpose', prompt activates /reviewer, runs git diff internally), then composes the final Phase 6 report",
+        "Does NOT spawn a QA sub-issue agent or any agent dedicated to QA-ticket creation after the reviewer completes — Phase 6 is Report, not QA Sub-Issue",
+        "Does NOT invoke `linear issue create` (or any shell command that creates a Linear sub-issue with a `QA:` prefix) at any point in the pipeline — regression guard against the removed Phase 6 behavior per docs/adr/0006-remove-qa-sub-issue-from-do-task.md",
+        "Does NOT write a `/tmp/qa-plan-*.md` file or any other QA-plan artifact — the playbook no longer carries a QA Plan Template",
+        "The final Phase 6 report does NOT contain a `### QA Sub-Issue` section — the report template was updated when Phase 6 was removed"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Refactor the PaymentProcessor class in our billing service. It's a 300-line god class with a giant switch statement handling 5 payment methods (credit_card, paypal, bank_transfer, crypto, gift_card). Each case has its own validation, processing, and notification logic inlined. There are no tests for this class. Extract each payment method into its own strategy class using the Strategy pattern.\n\nThe project is at /tmp/billing-service and uses Node.js with Express and TypeORM, following hexagonal architecture. Existing structure:\n- src/payments/domain/PaymentProcessor.ts (the 300-line god class)\n- src/payments/domain/Payment.ts (entity)\n- src/payments/application/ProcessPayment.ts (use case that calls PaymentProcessor)\n- src/payments/infrastructure/PaymentPostController.ts (route handler)\n- test/payments/ (empty directory — no existing tests)\n\nUse Jest for testing.",
+      "expected_output": "Coordinator spawns Explore agent, classifies as backend-only. Spawns backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect) whose plan includes a Tech Debt Impact section. The backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) prompt includes ATDD enforcement. The reviewer (subagent_type: 'general-purpose', prompt activates /reviewer) runs git diff internally and verifies ATDD discipline.",
+      "files": [],
+      "expectations": [
+        "Spawns an Explore agent (subagent_type: 'Explore') in Phase 1 for codebase discovery — the orchestrator does NOT call codebase-retrieval or Glob directly",
+        "Spawns a backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect) whose prompt includes the ATDD planning instructions — the architect should identify tech debt (god class, switch statement, no tests) and plan characterization tests before refactoring",
+        "The architecture plan presented via EnterPlanMode/ExitPlanMode includes a Tech Debt Impact section or equivalent identifying the existing tech debt and the ATDD approach",
+        "The backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) prompt includes ATDD enforcement instructions — write characterization tests to lock current PaymentProcessor behavior before extracting strategy classes",
+        "The reviewer (subagent_type: 'general-purpose', prompt activates /reviewer) prompt instructs the reviewer to run git diff internally and includes ATDD verification instructions — verify characterization tests exist that lock previous behavior, verify acceptance tests exist for the new strategy pattern",
+        "The final report (composed by a report agent) reflects ATDD discipline: characterization tests written before refactoring, acceptance tests for the strategy pattern"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Add a tags feature with a new tags table to a CMS API. Create a migration to add the tags table (id, name, slug, created_at) and a pivot table article_tags (article_id, tag_id). Then implement the Tag domain model and TagCreator use case.\n\nThe project is at /tmp/cms-api and uses Node.js with Express and TypeORM, following hexagonal architecture. Existing migrations:\n- src/shared/infrastructure/migrations/20260301120000_create_articles.ts\n- src/shared/infrastructure/migrations/20260302093000_add_article_status.ts\n\nUse Jest for testing.",
+      "expected_output": "Coordinator spawns Explore agent, classifies as backend-only. The backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) prompt includes the migration datetime rule requiring YYYYMMDDHHmmss format. The reviewer (subagent_type: 'general-purpose', prompt activates /reviewer) runs git diff internally and includes migration filename verification.",
+      "files": [],
+      "expectations": [
+        "Spawns an Explore agent (subagent_type: 'Explore') in Phase 1 for codebase discovery — the orchestrator does NOT call codebase-retrieval or Glob directly",
+        "The backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) prompt includes the database migration rule: migration filenames must use `YYYYMMDDHHmmss` format (full datetime with seconds)",
+        "The reviewer (subagent_type: 'general-purpose', prompt activates /reviewer) prompt instructs the reviewer to run git diff internally and includes the instruction to verify database migration filenames use `YYYYMMDDHHmmss` format and flag non-compliant filenames as Major",
+        "The architecture plan references migration files with datetime-with-seconds format (e.g., 20260303XXXXXX_create_tags.ts where XXXXXX includes hours, minutes, AND seconds)",
+        "The overall pipeline still follows the standard flow: Explore agent → backend-architect (subagent_type: 'general-purpose', prompt activates /backend-architect) → EnterPlanMode/ExitPlanMode → backend-developer (subagent_type: 'general-purpose', prompt activates /backend-developer) → reviewer (subagent_type: 'general-purpose', prompt activates /reviewer, internal git diff) → report agent"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "Implement a notification preferences feature for a user management system. Users can configure which notification channels (email, sms, push) are enabled for each event type (order_update, promotion, security_alert). The system needs a PUT /users/:id/notification-preferences endpoint and a GET /users/:id/notification-preferences endpoint. This is CSU-500.\n\nThe project is at /tmp/user-mgmt and uses Node.js with Express and TypeORM, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). It already has:\n- src/users/domain/User.ts (entity)\n- src/users/domain/UserId.ts (value object)\n- src/users/application/UserFinder.ts (use case)\n- src/users/infrastructure/TypeOrmUserRepository.ts (adapter)\n- src/users/infrastructure/UserGetController.ts (route handler)\n- test/users/application/UserFinder.test.ts (unit test)\n- test/users/domain/UserMother.ts (object mother)\n\nUse Jest for testing.",
+      "expected_output": "Coordinator completes all 6 phases without stopping after Phase 4. After implementation and validation (Phase 4), proceeds to review (Phase 5), then directly to the final report (Phase 6). CSU-500 is detected in Phase 1 but only used to fetch the upstream Linear issue for the autonomous-mode trigger check — no QA sub-issue is ever created. The orchestrator never presents an implementation summary or declares 'done' before Phase 6.",
+      "files": [],
+      "expectations": [
+        "After Phase 4 validation completes, spawns a reviewer agent (subagent_type: 'general-purpose', prompt activates /reviewer, Phase 5) that runs git diff internally — does NOT present a summary or declare 'done'",
+        "After Phase 5 review completes, proceeds directly to Phase 6 (Report) — does NOT spawn a QA sub-issue agent or any QA-ticket-creation agent, even though Linear issue code CSU-500 was detected",
+        "Does NOT invoke `linear issue create` (or any shell command that creates a Linear sub-issue with a `QA:` prefix) at any point in the pipeline — regression guard against the removed Phase 6 behavior per docs/adr/0006-remove-qa-sub-issue-from-do-task.md",
+        "CSU-500 is recorded in Phase 1 only to feed the autonomous-mode trigger check (fetching the upstream issue for an ADR/PRD reference), not to drive sub-issue creation",
+        "All 6 phases execute in order — the pipeline does not terminate before the Phase 6 report is composed and presented"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Implement a payment processing feature that integrates with Stripe for charging customers. The system needs a POST /payments endpoint that creates a Stripe PaymentIntent, processes the charge, and records the transaction. Support credit card payments only for now.\n\nThe project is at /tmp/billing-app and uses Node.js with Express and TypeORM, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). It already has:\n- src/orders/domain/Order.ts (entity)\n- src/orders/domain/OrderId.ts (value object)\n- src/orders/application/OrderCreator.ts (use case)\n- src/orders/infrastructure/TypeOrmOrderRepository.ts (adapter)\n- src/orders/infrastructure/OrderPostController.ts (route handler)\n- test/orders/application/OrderCreator.test.ts (unit test)\n\nNote: The Stripe SDK (`stripe` npm package) is NOT installed yet. There is no existing Stripe integration in the codebase.\n\nUse Jest for testing.",
+      "expected_output": "Coordinator spawns Explore agent which detects Stripe as an external dependency (SDK not installed, no existing usage). Phase 1b spawns a research agent that investigates Stripe API docs and writes findings to .agents/research/stripe-research.md. Research context is passed to backend-architect and backend-developer. Standard pipeline continues through all 7 phases.",
+      "files": [],
+      "expectations": [
+        "Explore agent detects Stripe as an external dependency with SDK not installed and no existing usage in the codebase",
+        "Phase 1b spawns a general-purpose research agent (mode: 'bypassPermissions') to investigate Stripe API documentation",
+        "Research agent writes findings to {project_path}/.agents/research/stripe-research.md",
+        "Backend architect (subagent_type: 'general-purpose', prompt activates /backend-architect) prompt includes a '## Research Context' section with the Stripe research findings or file path",
+        "Backend developer (subagent_type: 'general-purpose', prompt activates /backend-developer) prompt includes a '## Research Context' section instructing the developer to read the research file before implementing the Stripe integration",
+        "If the research agent fails, the pipeline proceeds to Phase 2 without blocking — research is best-effort"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "Add a Stripe webhook handler endpoint POST /webhooks/stripe that processes payment_intent.succeeded and payment_intent.payment_failed events. Update the corresponding order status based on the webhook event.\n\nThe project is at /tmp/billing-app and uses Node.js with Express and TypeORM, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). It already has:\n- src/payments/domain/Payment.ts (entity)\n- src/payments/infrastructure/StripePaymentAdapter.ts (existing Stripe integration)\n- src/payments/infrastructure/StripeClient.ts (configured Stripe SDK client)\n- package.json includes `\"stripe\": \"^14.0.0\"` as a dependency\n- test/payments/infrastructure/StripePaymentAdapter.test.ts (unit test with Stripe mocks)\n\nUse Jest for testing.",
+      "expected_output": "Coordinator spawns Explore agent which detects Stripe but finds SDK is already installed and existing usage exists (StripePaymentAdapter.ts, StripeClient.ts). Phase 1b is skipped — no research agent is spawned. Pipeline proceeds directly to Phase 2 with architect agents.",
+      "files": [],
+      "expectations": [
+        "Explore agent detects Stripe as an external dependency but reports SDK is installed and existing usage exists",
+        "Phase 1b is skipped — no research agent is spawned because Stripe is already integrated",
+        "Pipeline proceeds directly to Phase 2 (Plan Architecture) without a research phase",
+        "The Phase 1 output notes that external dependencies were detected but research was skipped because the service is already integrated"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "Implement the enrollment feature described in the PRD at docs/enrollment-prd.md. The PRD covers capacity validation rules, waitlist behavior, and enrollment confirmation emails.\n\nThe project is at /tmp/uni-mgmt and uses Node.js with Express and TypeORM, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). It already has:\n- src/courses/domain/Course.ts (entity)\n- src/courses/application/CourseCreator.ts (use case)\n- src/courses/infrastructure/TypeOrmCourseRepository.ts (adapter)\n- test/courses/application/CourseCreator.test.ts (unit test)\n\nUse Jest for testing.",
+      "expected_output": "Coordinator detects the file path reference 'docs/enrollment-prd.md' in the task description. The PRD content (or path) is included in architect prompts under a '## Reference Documents' section. The pipeline continues through all 7 phases.",
+      "files": [],
+      "expectations": [
+        "Detects 'docs/enrollment-prd.md' as a file path reference in the task description during Phase 1",
+        "If the file is <= 200 lines, its content is included inline in architect prompts under '## Reference Documents'. If > 200 lines, the path is passed with instructions to read it",
+        "Backend architect (subagent_type: 'general-purpose', prompt activates /backend-architect) prompt includes a '## Reference Documents' section with the PRD content or path",
+        "Phase 1 output lists 'docs/enrollment-prd.md' as an ingested reference document"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "Implement a student enrollment feature for a university management system. Students can enroll in courses, but each course has a maximum capacity. If the course is full, enrollment should be rejected with a clear error. The system needs a POST /enrollments endpoint. This is CSU-400.\n\nThe project is at /tmp/uni-mgmt and uses Node.js with Express and TypeORM, following hexagonal architecture (src/[module]/application, src/[module]/domain, src/[module]/infrastructure). It already has:\n- src/courses/domain/Course.ts (entity)\n- src/courses/domain/CourseId.ts (value object)\n- src/courses/application/CourseCreator.ts (use case)\n- src/courses/infrastructure/TypeOrmCourseRepository.ts (adapter)\n- src/courses/infrastructure/CoursePostController.ts (route handler)\n- test/courses/application/CourseCreator.test.ts (unit test)\n- test/courses/domain/CourseMother.ts (object mother)\n\nUse Jest for testing.",
+      "expected_output": "Coordinator runs the full 6-phase pipeline. The Phase 6 report includes a 'Human QA Checklist' section with concrete, observable steps for verifying enrollment success and capacity rejection. The checklist includes Setup, Happy Path, Error Cases, Edge Cases, and Regression subsections with API call examples.",
+      "files": [],
+      "expectations": [
+        "The Phase 6 report includes a '### Human QA Checklist' section",
+        "The QA checklist includes a 'Happy Path' subsection with a concrete step for successful enrollment (e.g., POST /enrollments with valid data → expect 201)",
+        "The QA checklist includes an 'Error Cases' subsection with a concrete step for capacity rejection (e.g., POST /enrollments for a full course → expect error response)",
+        "The QA checklist includes 'Setup', 'Edge Cases', and 'Regression' subsections",
+        "Steps are concrete and observable — they specify HTTP methods, endpoints, expected status codes, and response shapes (not vague descriptions)",
+        "The report includes a re-entry instruction for fixing QA findings via /do-task"
+      ]
+    }
+  ]
+}
