@@ -13,11 +13,41 @@
       "skillPath": "skills/augment-review/SKILL.md",
       "computedHash": "ca7a43a4ce8c5f468c072f3e266d9b8ca42ee69ad18de6bf7a1354d889975aca"
     },
+    "do-task": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/do-task/SKILL.md",
+      "computedHash": "b5a104538f23d596318f5d42ee4ea1b09ad38f5065bc1ec22f9a4db8394e4171"
+    },
+    "grill-me": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/grill-me/SKILL.md",
+      "computedHash": "8323abd0a493ceff41c00c5516ad95c6356da06d6fe18b08310e8cfee5a3b898"
+    },
+    "linear-deep-analysis": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/linear-deep-analysis/SKILL.md",
+      "computedHash": "598d517a615d31d6682f4e914f8c3eaf775ae1a3a802092174e182b1e2645a3e"
+    },
     "pr-merge-loop": {
       "source": "git@github.com:medine-tech/knowledge-base",
       "sourceType": "git",
       "skillPath": "skills/pr-merge-loop/SKILL.md",
       "computedHash": "b12e7ea7bea785dfe0706e888c6859c02144f5df31265f5723655374930f4cbc"
+    },
+    "prd-to-issues": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/prd-to-issues/SKILL.md",
+      "computedHash": "75993b89633edbc8783b8979383d2a5ddd079a59761fb01f94bff488af731e93"
+    },
+    "write-a-prd": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/write-a-prd/SKILL.md",
+      "computedHash": "90403379d54ba34536bc81c51016c873971da2fd82cd87c777cc299c389cba6d"
     }
   }
 }
