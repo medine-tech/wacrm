@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "agent-md-creator": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/agent-md-creator/SKILL.md",
+      "computedHash": "082e9a6da69565af5a42dc8bf6b2e970316323fddff8b8d4710958ccc9f491b0"
+    },
     "augment-review": {
       "source": "git@github.com:medine-tech/knowledge-base",
       "sourceType": "git",
