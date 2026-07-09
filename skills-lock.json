@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "pr-merge-loop": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/pr-merge-loop/SKILL.md",
+      "computedHash": "b12e7ea7bea785dfe0706e888c6859c02144f5df31265f5723655374930f4cbc"
+    }
+  }
+}
