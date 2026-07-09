@@ -40,9 +40,10 @@ export function useUnreadNotifications(): number {
             const row = payload.new as Notification;
             if (!row.read_at) setCount((n) => n + 1);
           } else if (payload.eventType === "UPDATE") {
-            // Updates here only ever set read_at (marking a notification
-            // read). Derive purely from the new row so we don't rely on
-            // payload.old columns, which require REPLICA IDENTITY FULL.
+            // An update either marks the row read or coalesces another
+            // inbound message into it (body/last_message_at), which must
+            // not move the count. Derive purely from the new row so we
+            // don't rely on payload.old columns.
             const newRow = payload.new as Notification;
             if (newRow.read_at) setCount((n) => Math.max(0, n - 1));
           } else if (payload.eventType === "DELETE") {

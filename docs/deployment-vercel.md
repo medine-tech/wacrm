@@ -120,14 +120,35 @@ section 3) — push fires immediately on the notification insert; the
 email digest still fires later if the notification stays unread and the
 agent is away. The two compose; neither replaces the other.
 
-How it wires together on a notification INSERT:
+How it wires together:
 
-1. A Postgres `pg_net` trigger (`notify_push_dispatch`, migration
-   `038_web_push.sql`) POSTs `{ notification_id }` to
-   `/api/notifications/push-dispatch` with `Authorization: Bearer`.
+1. Two Postgres `pg_net` triggers both call `notify_push_dispatch`
+   (migrations `038_web_push.sql`, `040_notification_redelivery.sql`),
+   POSTing `{ notification_id }` to `/api/notifications/push-dispatch`
+   with `Authorization: Bearer`:
+   - `on_notification_push` — a notification row is INSERTed.
+   - `on_notification_push_refresh` — an unread notification is
+     refreshed by another inbound message. Repeat messages coalesce
+     into one row, so without this only the first message of a burst
+     would ever push.
 2. The dispatch endpoint (service role) loads the notification and the
    recipient's `push_subscriptions`, sends Web Push via VAPID, and
-   prunes dead subscriptions (404/410).
+   prunes dead subscriptions (404/410). It answers non-2xx on failure
+   so `net._http_response` records a broken push channel instead of
+   recording a misconfiguration as success.
+
+An inbound message to a conversation with **no assigned agent** fans a
+deduped `unassigned_message` notification out to every account member;
+assigning the conversation marks those rows read automatically.
+
+The trigger producers must never roll back a customer's message, so
+they catch their own failures — into `notification_failures`, not into
+a log line nobody reads. Check it first when notifications go missing:
+
+```sql
+select source, sqlstate, message, created_at
+from notification_failures order by created_at desc limit 20;
+```
 
 Set the four `*VAPID*` / `NOTIFICATIONS_PUSH_SECRET` env vars in the
 table above (generate the key pair with `npx web-push
@@ -139,9 +160,10 @@ no secret lives in the migration):
   e.g. `https://wacrm.medine.tech/api/notifications/push-dispatch`.
 - `push_dispatch_secret` — the same value as `NOTIFICATIONS_PUSH_SECRET`.
 
-Until both Vault secrets exist the trigger no-ops, and until all three
-VAPID vars are set the dispatch endpoint reports `push_not_configured`
-— so the feature is dormant and harmless when unconfigured. No CSP or
+Until both Vault secrets exist the triggers no-op, so the feature is
+dormant and harmless when unconfigured. Once they exist push is meant
+to be live: the dispatch endpoint then answers `503` if the VAPID vars
+are missing, rather than reporting a silent success. No CSP or
 `vercel.json` change is needed: the service worker (`/sw.js`) is
 same-origin (`worker-src 'self'`), the subscribe POST is same-origin
 (`connect-src 'self'`), and push delivery is browser↔push-service

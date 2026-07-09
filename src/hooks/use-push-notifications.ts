@@ -55,6 +55,53 @@ function isPushSupported(): boolean {
   );
 }
 
+/** Register the worker, subscribe, and persist the subscription server-side. */
+async function subscribeAndPersist(
+  registration: ServiceWorkerRegistration,
+  applicationServerKey: string
+): Promise<void> {
+  const existing = await registration.pushManager.getSubscription();
+  const subscription =
+    existing ??
+    (await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(applicationServerKey),
+    }));
+
+  // Always re-POST, even for an endpoint the browser already held: sign-out
+  // deletes the row while the endpoint can survive, and on a shared browser
+  // the endpoint may still be bound to the previous user.
+  const response = await fetch(SUBSCRIBE_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(subscription.toJSON()),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to register the push subscription');
+  }
+}
+
+/**
+ * Restore this browser's push subscription when the user has already
+ * granted the Notification permission. Never prompts.
+ *
+ * Sign-out tears the subscription down on purpose (an origin-scoped push
+ * endpoint would otherwise deliver the departing user's notifications to
+ * whoever logs in next). Nothing rebuilt it afterwards, so push stayed
+ * dead until the user re-armed the Settings toggle by hand. Mount this
+ * once per signed-in session instead.
+ */
+export async function restorePushSubscription(): Promise<void> {
+  const applicationServerKey = VAPID_PUBLIC_KEY;
+  if (!isPushSupported() || !applicationServerKey) return;
+  if (Notification.permission !== 'granted') return;
+
+  const registration = await navigator.serviceWorker.register('/sw.js', {
+    scope: '/',
+  });
+  await subscribeAndPersist(registration, applicationServerKey);
+}
+
 export function usePushNotifications(): UsePushNotifications {
   const [state, setState] = useState<PushState>('unsupported');
   const [busy, setBusy] = useState(false);
@@ -126,19 +173,7 @@ export function usePushNotifications(): UsePushNotifications {
         return next;
       }
 
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(applicationServerKey),
-      });
-
-      const response = await fetch(SUBSCRIBE_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(subscription.toJSON()),
-      });
-      if (!response.ok) {
-        throw new Error('Failed to register the push subscription');
-      }
+      await subscribeAndPersist(registration, applicationServerKey);
 
       setState('subscribed');
       return 'subscribed';

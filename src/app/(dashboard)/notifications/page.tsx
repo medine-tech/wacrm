@@ -8,6 +8,7 @@ import type { Notification } from "@/types";
 import {
   Bell,
   CheckCheck,
+  Inbox,
   Loader2,
   MessageSquare,
   UserPlus,
@@ -21,7 +22,18 @@ import { toast } from "sonner";
 const TYPE_ICON: Record<Notification["type"], typeof Bell> = {
   conversation_assigned: UserPlus,
   new_message: MessageSquare,
+  unassigned_message: Inbox,
 };
+
+// Repeat messages coalesce into one row, moving last_message_at but not
+// created_at. Order the feed by what each row displays.
+function activityAt(n: Notification): number {
+  return new Date(n.last_message_at ?? n.created_at).getTime();
+}
+
+function byRecentActivity(a: Notification, b: Notification): number {
+  return activityAt(b) - activityAt(a);
+}
 
 export default function NotificationsPage() {
   const router = useRouter();
@@ -45,7 +57,7 @@ export default function NotificationsPage() {
       setError(fetchErr.message);
       return;
     }
-    setNotifications((data ?? []) as Notification[]);
+    setNotifications(((data ?? []) as Notification[]).sort(byRecentActivity));
   }, [accountId]);
 
   useEffect(() => {
@@ -68,13 +80,15 @@ export default function NotificationsPage() {
             setNotifications((prev) => {
               if (!prev) return [row];
               if (prev.some((n) => n.id === row.id)) return prev;
-              return [row, ...prev];
+              return [row, ...prev].sort(byRecentActivity);
             });
           } else if (payload.eventType === "UPDATE") {
             const row = payload.new as Notification;
-            setNotifications((prev) =>
-              prev?.map((n) => (n.id === row.id ? { ...n, ...row } : n)) ??
-              prev,
+            setNotifications(
+              (prev) =>
+                prev
+                  ?.map((n) => (n.id === row.id ? { ...n, ...row } : n))
+                  .sort(byRecentActivity) ?? prev,
             );
           } else if (payload.eventType === "DELETE") {
             const oldRow = payload.old as Partial<Notification>;
@@ -258,9 +272,10 @@ export default function NotificationsPage() {
                       </p>
                     )}
                     <p className="mt-1 text-[11px] text-muted-foreground/70">
-                      {formatDistanceToNow(new Date(n.created_at), {
-                        addSuffix: true,
-                      })}
+                      {formatDistanceToNow(
+                        new Date(n.last_message_at ?? n.created_at),
+                        { addSuffix: true },
+                      )}
                     </p>
                   </div>
                 </button>
