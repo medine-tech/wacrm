@@ -10,3 +10,5 @@ supabase/migrations
 public/opus
 .agents/skills
 .claude/skills
+.agents/agents
+.claude/agents
