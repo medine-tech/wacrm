@@ -13,11 +13,35 @@
       "skillPath": "skills/augment-review/SKILL.md",
       "computedHash": "ca7a43a4ce8c5f468c072f3e266d9b8ca42ee69ad18de6bf7a1354d889975aca"
     },
+    "backend-architect": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/backend-architect/SKILL.md",
+      "computedHash": "17f8af329bbde8ad7cf0cd0315020f2403cad365ec50e7af0c042faa9529014c"
+    },
+    "backend-developer": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/backend-developer/SKILL.md",
+      "computedHash": "5d6763c3c26655ee36f69e57f49b0d00cd1c182fe32467541ecf0ff1a8d27d29"
+    },
     "do-task": {
       "source": "git@github.com:medine-tech/knowledge-base",
       "sourceType": "git",
       "skillPath": "skills/do-task/SKILL.md",
       "computedHash": "b5a104538f23d596318f5d42ee4ea1b09ad38f5065bc1ec22f9a4db8394e4171"
+    },
+    "frontend-architect": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/frontend-architect/SKILL.md",
+      "computedHash": "ad688f76daae11e00cd8940e40ba15d17dcb750ff459870487d9b74fc747cd2d"
+    },
+    "frontend-developer": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/frontend-developer/SKILL.md",
+      "computedHash": "f56e8d64dc3c70bac839d4f75d8388f2e974d06e008ad0ebd166f68bf3288063"
     },
     "grill-me": {
       "source": "git@github.com:medine-tech/knowledge-base",
@@ -42,6 +66,12 @@
       "sourceType": "git",
       "skillPath": "skills/prd-to-issues/SKILL.md",
       "computedHash": "75993b89633edbc8783b8979383d2a5ddd079a59761fb01f94bff488af731e93"
+    },
+    "reviewer": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/reviewer/SKILL.md",
+      "computedHash": "48718034cb40f9934d386dc0bebdc82b980b2a239060aaca6f3d6f1f0f331fd7"
     },
     "write-a-prd": {
       "source": "git@github.com:medine-tech/knowledge-base",
