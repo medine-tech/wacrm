@@ -42,3 +42,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# pr-merge-loop skill state (decision log, per-PR)
+/.pr-merge-loop/
