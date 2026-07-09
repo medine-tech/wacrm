@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "augment-review": {
+      "source": "git@github.com:medine-tech/knowledge-base",
+      "sourceType": "git",
+      "skillPath": "skills/augment-review/SKILL.md",
+      "computedHash": "ca7a43a4ce8c5f468c072f3e266d9b8ca42ee69ad18de6bf7a1354d889975aca"
+    },
     "pr-merge-loop": {
       "source": "git@github.com:medine-tech/knowledge-base",
       "sourceType": "git",
