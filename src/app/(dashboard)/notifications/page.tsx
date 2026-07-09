@@ -25,8 +25,9 @@ const TYPE_ICON: Record<Notification["type"], typeof Bell> = {
   unassigned_message: Inbox,
 };
 
-// Repeat messages coalesce into one row, moving last_message_at but not
-// created_at. Order the feed by what each row displays.
+// Mirrors the DB's generated `activity_at`. Recomputed here rather than
+// read from the row because Postgres omits generated columns from the
+// logical-replication payload realtime updates arrive on.
 function activityAt(n: Notification): number {
   return new Date(n.last_message_at ?? n.created_at).getTime();
 }
@@ -47,11 +48,14 @@ export default function NotificationsPage() {
   const load = useCallback(async () => {
     if (!accountId) return;
     const supabase = createClient();
+    // activity_at (migration 041) is COALESCE(last_message_at, created_at):
+    // ordering the LIMIT window by it keeps a long-running conversation that
+    // keeps coalescing inside the most-recent-100, which created_at would drop.
     const { data, error: fetchErr } = await supabase
       .from("notifications")
       .select("*")
       .eq("account_id", accountId)
-      .order("created_at", { ascending: false })
+      .order("activity_at", { ascending: false })
       .limit(100);
     if (fetchErr) {
       setError(fetchErr.message);
